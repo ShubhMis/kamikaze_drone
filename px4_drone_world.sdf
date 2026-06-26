@@ -1,0 +1,407 @@
+<?xml version="1.0" ?>
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  WORLD: px4_drone_world.sdf
+
+  Stack    : Gazebo Harmonic + ROS2 Jazzy
+  Drone    : PX4-style X500 quadcopter (inline model, no external deps)
+  Camera   : Front-facing, HFOV = 1.5708 rad (90°), 640x480 @ 30Hz
+  Topics   :
+    /drone/camera/image   ← front camera feed
+    /imu                  ← IMU @ 250 Hz
+    /model/drone/odometry ← pose + velocity
+
+  Run      : gz sim px4_drone_world.sdf
+  Viewer   : python3 px4_camera_fov_viewer.py
+  ═══════════════════════════════════════════════════════════════════
+-->
+<sdf version="1.10">
+  <world name="px4_drone_world">
+
+    <!-- ═══════════════════════════════════════════
+         PHYSICS
+    ═══════════════════════════════════════════ -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- ═══════════════════════════════════════════
+         REQUIRED WORLD PLUGINS
+    ═══════════════════════════════════════════ -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre</render_engine>
+    </plugin>
+
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+
+    <!-- ═══════════════════════════════════════════
+         ATMOSPHERE (needed by PX4 barometer)
+    ═══════════════════════════════════════════ -->
+    <atmosphere type="adiabatic"/>
+
+    <!-- ═══════════════════════════════════════════
+         MAGNETIC FIELD (for PX4 compass)
+    ═══════════════════════════════════════════ -->
+    <magnetic_field>5.5645e-06 2.28758e-05 -4.23884e-05</magnetic_field>
+
+    <!-- ═══════════════════════════════════════════
+         SUN LIGHT
+    ═══════════════════════════════════════════ -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1.0 1.0 1.0 1</diffuse>
+      <specular>0.5 0.5 0.5 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="ground_link">
+        <collision name="ground_collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="ground_visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══════════════════════════════════════════
+         GROUND PLANE — coloured grid
+    ═══════════════════════════════════════════ -->
+    <!-- <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>200 200</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>200 200</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.18 0.24 0.18 1</ambient>
+            <diffuse>0.22 0.30 0.22 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model> -->
+     <!-- <include>
+      <uri>model://vrc_heightmap_1</uri>
+    </include> -->
+    <!-- ═══════════════════════════════════════════
+         INDIA-PAKISTAN BORDER (Hills, Trees, Border Fence)
+    ═══════════════════════════════════════════ -->
+
+    <!-- Long Border Fence running horizontally along Y = 30 -->
+    <model name="border_fence">
+      <static>true</static>
+      <pose>0 30 2.5 0 0 0</pose>
+      <link name="link">
+        <visual name="fence_vis">
+          <geometry><box><size>200 0.3 5</size></box></geometry>
+          <material>
+            <ambient>0.4 0.4 0.4 0.7</ambient>
+            <diffuse>0.4 0.4 0.4 0.7</diffuse>
+          </material>
+        </visual>
+        <collision name="fence_col">
+          <geometry><box><size>200 0.3 5</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+
+    <!-- Watchtower 1 (South side) -->
+    <model name="watchtower_south">
+      <static>true</static>
+      <pose>15 20 8 0 0 0</pose>
+      <link name="link">
+        <visual name="vis"><geometry><box><size>4 4 16</size></box></geometry>
+          <material><ambient>0.3 0.4 0.2 1</ambient><diffuse>0.3 0.4 0.2 1</diffuse></material>
+        </visual>
+        <collision name="col"><geometry><box><size>4 4 16</size></box></geometry></collision>
+      </link>
+    </model>
+
+    <!-- Watchtower 2 (North side) -->
+    <model name="watchtower_north">
+      <static>true</static>
+      <pose>-15 40 8 0 0 0</pose>
+      <link name="link">
+        <visual name="vis"><geometry><box><size>4 4 16</size></box></geometry>
+          <material><ambient>0.5 0.4 0.3 1</ambient><diffuse>0.5 0.4 0.3 1</diffuse></material>
+        </visual>
+        <collision name="col"><geometry><box><size>4 4 16</size></box></geometry></collision>
+      </link>
+    </model>
+
+    <!-- Rolling Hills (Spheres buried in the ground) -->
+    <model name="hill_1">
+      <static>true</static>
+      <pose>40 50 -10 0 0 0</pose>
+      <link name="link">
+        <visual name="vis"><geometry><sphere><radius>25</radius></sphere></geometry>
+          <material><ambient>0.25 0.35 0.15 1</ambient><diffuse>0.25 0.35 0.15 1</diffuse></material>
+        </visual>
+        <collision name="col"><geometry><sphere><radius>25</radius></sphere></geometry></collision>
+      </link>
+    </model>
+
+    <model name="hill_2">
+      <static>true</static>
+      <pose>-50 10 -8 0 0 0</pose>
+      <link name="link">
+        <visual name="vis"><geometry><sphere><radius>18</radius></sphere></geometry>
+          <material><ambient>0.3 0.35 0.2 1</ambient><diffuse>0.3 0.35 0.2 1</diffuse></material>
+        </visual>
+        <collision name="col"><geometry><sphere><radius>18</radius></sphere></geometry></collision>
+      </link>
+    </model>
+
+    <model name="hill_3">
+      <static>true</static>
+      <pose>30 -20 -15 0 0 0</pose>
+      <link name="link">
+        <visual name="vis"><geometry><sphere><radius>30</radius></sphere></geometry>
+          <material><ambient>0.2 0.3 0.2 1</ambient><diffuse>0.2 0.3 0.2 1</diffuse></material>
+        </visual>
+        <collision name="col"><geometry><sphere><radius>30</radius></sphere></geometry></collision>
+      </link>
+    </model>
+
+    <!-- Low-Poly Procedural Trees (Offline, Instant Load) -->
+    
+    <model name="tree_1">
+      <static>true</static><pose>10 10 0 0 0 0</pose>
+      <link name="trunk"><visual name="v"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>2</length></cylinder></geometry><material><ambient>0.3 0.2 0.1 1</ambient><diffuse>0.3 0.2 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>2</length></cylinder></geometry></collision></link>
+      <link name="leaves"><visual name="v"><pose>0 0 3.5 0 0 0</pose><geometry><sphere><radius>2.5</radius></sphere></geometry><material><ambient>0.1 0.4 0.1 1</ambient><diffuse>0.1 0.4 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 3.5 0 0 0</pose><geometry><sphere><radius>2.5</radius></sphere></geometry></collision></link>
+    </model>
+
+    <model name="tree_2">
+      <static>true</static><pose>-20 15 0 0 0 0</pose>
+      <link name="trunk"><visual name="v"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>2</length></cylinder></geometry><material><ambient>0.3 0.2 0.1 1</ambient><diffuse>0.3 0.2 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>2</length></cylinder></geometry></collision></link>
+      <link name="leaves"><visual name="v"><pose>0 0 3.5 0 0 0</pose><geometry><sphere><radius>2.5</radius></sphere></geometry><material><ambient>0.1 0.4 0.1 1</ambient><diffuse>0.1 0.4 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 3.5 0 0 0</pose><geometry><sphere><radius>2.5</radius></sphere></geometry></collision></link>
+    </model>
+
+    <model name="tree_3">
+      <static>true</static><pose>-5 45 0 0 0 0</pose>
+      <link name="trunk"><visual name="v"><pose>0 0 1.5 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>3</length></cylinder></geometry><material><ambient>0.3 0.2 0.1 1</ambient><diffuse>0.3 0.2 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 1.5 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>3</length></cylinder></geometry></collision></link>
+      <link name="leaves"><visual name="v"><pose>0 0 5 0 0 0</pose><geometry><sphere><radius>3.5</radius></sphere></geometry><material><ambient>0.15 0.35 0.1 1</ambient><diffuse>0.15 0.35 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 5 0 0 0</pose><geometry><sphere><radius>3.5</radius></sphere></geometry></collision></link>
+    </model>
+
+    <model name="tree_4">
+      <static>true</static><pose>25 -10 0 0 0 0</pose>
+      <link name="trunk"><visual name="v"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>2</length></cylinder></geometry><material><ambient>0.3 0.2 0.1 1</ambient><diffuse>0.3 0.2 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.4</radius><length>2</length></cylinder></geometry></collision></link>
+      <link name="leaves"><visual name="v"><pose>0 0 3.5 0 0 0</pose><geometry><sphere><radius>2.5</radius></sphere></geometry><material><ambient>0.1 0.4 0.1 1</ambient><diffuse>0.1 0.4 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 3.5 0 0 0</pose><geometry><sphere><radius>2.5</radius></sphere></geometry></collision></link>
+    </model>
+
+    <model name="tree_pine_1">
+      <static>true</static><pose>-30 -5 0 0 0 0</pose>
+      <link name="trunk"><visual name="v"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.3</radius><length>2</length></cylinder></geometry><material><ambient>0.2 0.1 0.05 1</ambient><diffuse>0.2 0.1 0.05 1</diffuse></material></visual><collision name="c"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.3</radius><length>2</length></cylinder></geometry></collision></link>
+      <link name="leaves1"><visual name="v"><pose>0 0 3 0 0 0</pose><geometry><cylinder><radius>1.5</radius><length>3</length></cylinder></geometry><material><ambient>0.05 0.3 0.1 1</ambient><diffuse>0.05 0.3 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 3 0 0 0</pose><geometry><cylinder><radius>1.5</radius><length>3</length></cylinder></geometry></collision></link>
+    </model>
+
+    <model name="tree_pine_2">
+      <static>true</static><pose>35 35 0 0 0 0</pose>
+      <link name="trunk"><visual name="v"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.3</radius><length>2</length></cylinder></geometry><material><ambient>0.2 0.1 0.05 1</ambient><diffuse>0.2 0.1 0.05 1</diffuse></material></visual><collision name="c"><pose>0 0 1 0 0 0</pose><geometry><cylinder><radius>0.3</radius><length>2</length></cylinder></geometry></collision></link>
+      <link name="leaves1"><visual name="v"><pose>0 0 3 0 0 0</pose><geometry><cylinder><radius>1.5</radius><length>3</length></cylinder></geometry><material><ambient>0.05 0.3 0.1 1</ambient><diffuse>0.05 0.3 0.1 1</diffuse></material></visual><collision name="c"><pose>0 0 3 0 0 0</pose><geometry><cylinder><radius>1.5</radius><length>3</length></cylinder></geometry></collision></link>
+    </model>
+
+
+    <!-- Landing pad marker under drone -->
+    <model name="landing_pad">
+      <static>true</static>
+      <pose>0 0 0.01 0 0 0</pose>
+      <link name="link">
+        <visual name="pad_outer">
+          <geometry><cylinder><radius>2.0</radius><length>0.02</length></cylinder></geometry>
+          <material>
+            <ambient>0.90 0.90 0.10 1</ambient>
+            <diffuse>0.90 0.90 0.10 1</diffuse>
+          </material>
+        </visual>
+        <visual name="pad_inner">
+          <geometry><cylinder><radius>0.6</radius><length>0.025</length></cylinder></geometry>
+          <material>
+            <ambient>1.0 0.60 0.0 1</ambient>
+            <diffuse>1.0 0.60 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Grid markers (north indicator) -->
+    <model name="north_arrow">
+      <static>true</static>
+      <pose>0 5 0.01 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.3 3 0.04</size></box></geometry>
+          <material>
+            <ambient>0.9 0.9 0.9 1</ambient>
+            <diffuse>0.9 0.9 0.9 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══════════════════════════════════════════
+         STATIC TARGET DRONE — 12m E, 8m N, 15m alt
+    ═══════════════════════════════════════════ -->
+    <model name="target_drone">
+      <static>true</static>
+      <pose>12 8 15 0 0 0.785</pose>
+      <link name="body">
+        <visual name="body_vis">
+          <geometry><box><size>0.28 0.28 0.09</size></box></geometry>
+          <material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material>
+        </visual>
+        <visual name="arm_0"><pose>0.17 -0.17 0 0 0 -0.785</pose>
+          <geometry><box><size>0.32 0.035 0.035</size></box></geometry>
+          <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+        <visual name="arm_1"><pose>0.17 0.17 0 0 0 0.785</pose>
+          <geometry><box><size>0.32 0.035 0.035</size></box></geometry>
+          <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+        <visual name="arm_2"><pose>-0.17 -0.17 0 0 0 0.785</pose>
+          <geometry><box><size>0.32 0.035 0.035</size></box></geometry>
+          <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+        <visual name="arm_3"><pose>-0.17 0.17 0 0 0 -0.785</pose>
+          <geometry><box><size>0.32 0.035 0.035</size></box></geometry>
+          <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
+        </visual>
+        <visual name="rotor_0"><pose>0.24 -0.24 0.02 0 0 0</pose>
+          <geometry><cylinder><radius>0.11</radius><length>0.012</length></cylinder></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="rotor_1"><pose>0.24 0.24 0.02 0 0 0</pose>
+          <geometry><cylinder><radius>0.11</radius><length>0.012</length></cylinder></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="rotor_2"><pose>-0.24 -0.24 0.02 0 0 0</pose>
+          <geometry><cylinder><radius>0.11</radius><length>0.012</length></cylinder></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+        <visual name="rotor_3"><pose>-0.24 0.24 0.02 0 0 0</pose>
+          <geometry><cylinder><radius>0.11</radius><length>0.012</length></cylinder></geometry>
+          <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══════════════════════════════════════════
+         PX4 X500 WITH MONO CAMERA (from PX4-Autopilot/Tools)
+         
+         Position : 0 0 0.3 (sitting just above landing pad)
+         Camera   : front-facing mono camera
+    ═══════════════════════════════════════════ -->
+    <model name="drone">
+      <pose>0 0 0.3 0 0 0</pose>
+      
+      <!-- Include the PX4 x500_mono_cam model -->
+      <include merge="true">
+        <uri>x500_mono_cam</uri>
+      </include>
+
+      <!-- Velocity controller — filename confirmed from Gazebo 8 reference SDF -->
+      <!-- /drone/cmd_vel and /drone/enable subscribe in robotNamespace=drone -->
+      <plugin filename="gz-sim-multicopter-control-system"
+              name="gz::sim::systems::MulticopterVelocityControl">
+        <robotNamespace>drone</robotNamespace>
+        <commandSubTopic>cmd_vel</commandSubTopic>
+        <enableSubTopic>enable</enableSubTopic>
+        <comLinkName>base_link</comLinkName>
+        <velocityGain>2.7 2.7 2.7</velocityGain>
+        <attitudeGain>2 3 0.15</attitudeGain>
+        <angularRateGain>0.4 0.52 0.18</angularRateGain>
+        <maximumLinearAcceleration>2 2 2</maximumLinearAcceleration>
+        <rotorConfiguration>
+          <!-- rotor_0: front-right CCW -->
+          <rotor>
+            <jointName>rotor_0_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>1</direction>
+          </rotor>
+          <!-- rotor_1: back-left CCW -->
+          <rotor>
+            <jointName>rotor_1_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>1</direction>
+          </rotor>
+          <!-- rotor_2: front-left CW -->
+          <rotor>
+            <jointName>rotor_2_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>-1</direction>
+          </rotor>
+          <!-- rotor_3: back-right CW -->
+          <rotor>
+            <jointName>rotor_3_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>-1</direction>
+          </rotor>
+        </rotorConfiguration>
+      </plugin>
+    
+      <!-- Odometry publisher -->
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>drone/odom</odom_frame>
+        <robot_base_frame>drone</robot_base_frame>
+        <odom_publish_frequency>50</odom_publish_frequency>
+      </plugin>
+
+    </model>
+
+  </world>
+</sdf>

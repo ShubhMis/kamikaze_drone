@@ -1,0 +1,249 @@
+<?xml version="1.0" ?>
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  WORLD: px4_baylands_world.sdf
+
+  Baylands park terrain from Gazebo Fuel + our PX4 drones.
+  
+  Stack    : Gazebo Harmonic + ROS2 Jazzy
+  Terrain  : VentuRobotics/baylands (downloaded from Fuel on first run)
+  Drone    : PX4-style X500 quadcopter with front mono camera
+  Target   : Static red quadcopter (movable via set_pose service)
+
+  Run      : gz sim px4_baylands_world.sdf
+  ═══════════════════════════════════════════════════════════════════
+-->
+<sdf version="1.10">
+  <world name="px4_baylands_world">
+
+    <!-- ═══════════════════════════════════════════
+         PHYSICS  (4ms step = 250Hz, good balance for perf)
+    ═══════════════════════════════════════════ -->
+    <physics name="4ms" type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- ═══════════════════════════════════════════
+         REQUIRED WORLD PLUGINS
+    ═══════════════════════════════════════════ -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+
+    <plugin filename="gz-sim-navsat-system"
+            name="gz::sim::systems::NavSat"/>
+
+    <!-- ═══════════════════════════════════════════
+         ATMOSPHERE & MAGNETIC FIELD
+    ═══════════════════════════════════════════ -->
+    <atmosphere type="adiabatic"/>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <gravity>0 0 -9.8</gravity>
+
+    <!-- ═══════════════════════════════════════════
+         SPHERICAL COORDINATES  (Baylands Park, Sunnyvale CA)
+    ═══════════════════════════════════════════ -->
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>37.412173071650805</latitude_deg>
+      <longitude_deg>-121.998878727967</longitude_deg>
+      <elevation>38</elevation>
+    </spherical_coordinates>
+
+    <!-- ═══════════════════════════════════════════
+         SCENE & SKY
+    ═══════════════════════════════════════════ -->
+    <scene>
+      <ambient>0.8 0.5 1</ambient>
+      <grid>false</grid>
+      <sky>
+        <clouds>true</clouds>
+      </sky>
+      <shadows>false</shadows>
+    </scene>
+
+    <!-- ═══════════════════════════════════════════
+         SUNLIGHT
+    ═══════════════════════════════════════════ -->
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- ═══════════════════════════════════════════
+         BAYLANDS TERRAIN  (from Gazebo Fuel)
+         First run will download ~230 MB mesh.
+    ═══════════════════════════════════════════ -->
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/VentuRobotics/models/baylands</uri>
+      <name>park</name>
+      <pose>205 155 -1 0 0 0</pose>
+    </include>
+
+    <!-- ═══════════════════════════════════════════
+         LANDING PAD  (under player drone)
+    ═══════════════════════════════════════════ -->
+    <model name="landing_pad">
+      <static>true</static>
+      <pose>100 100 0.01 0 0 0</pose>
+      <link name="link">
+        <visual name="pad_outer">
+          <geometry><cylinder><radius>2.0</radius><length>0.02</length></cylinder></geometry>
+          <material>
+            <ambient>0.90 0.90 0.10 1</ambient>
+            <diffuse>0.90 0.90 0.10 1</diffuse>
+          </material>
+        </visual>
+        <visual name="pad_inner">
+          <geometry><cylinder><radius>0.6</radius><length>0.025</length></cylinder></geometry>
+          <material>
+            <ambient>1.0 0.60 0.0 1</ambient>
+            <diffuse>1.0 0.60 0.0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ═══════════════════════════════════════════
+         STATIC TARGET DRONE  (red quad, 15m above player spawn)
+    ═══════════════════════════════════════════ -->
+    <model name="target_drone">
+      <static>true</static>
+      <pose>155 152 50 0 0 0.785</pose>
+      <include merge="true">
+        <uri>x500_base</uri>
+      </include>
+    </model>
+
+    <!-- ═══════════════════════════════════════════
+         GROUND TARGETS (Car & Person)
+    ═══════════════════════════════════════════ -->
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/SUV</uri>
+      <name>car_target</name>
+      <pose>140 100 0 0 0 -1.57</pose>
+    </include>
+
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Walking person</uri>
+      <name>person_target</name>
+      <pose>125 102 0 0 0 -2.0</pose>
+    </include>
+
+    <!-- ═══════════════════════════════════════════
+         PX4 X500 PLAYER DRONE WITH MONO CAMERA
+
+          Spawn at (100, 100, 0.3) — ~70m from target for realistic approach
+    ═══════════════════════════════════════════ -->
+    <model name="drone">
+      <pose>100 100 0.3 0 0 0</pose>
+
+      <!-- Include the PX4 x500_mono_cam model -->
+      <include merge="true">
+        <uri>x500_mono_cam</uri>
+      </include>
+
+      <!-- Velocity controller -->
+      <plugin filename="gz-sim-multicopter-control-system"
+              name="gz::sim::systems::MulticopterVelocityControl">
+        <robotNamespace>drone</robotNamespace>
+        <commandSubTopic>cmd_vel</commandSubTopic>
+        <enableSubTopic>enable</enableSubTopic>
+        <comLinkName>base_link</comLinkName>
+        <velocityGain>2.7 2.7 2.7</velocityGain>
+        <attitudeGain>2 3 0.15</attitudeGain>
+        <angularRateGain>0.4 0.52 0.18</angularRateGain>
+        <maximumLinearAcceleration>2 2 2</maximumLinearAcceleration>
+        <rotorConfiguration>
+          <rotor>
+            <jointName>rotor_0_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>1</direction>
+          </rotor>
+          <rotor>
+            <jointName>rotor_1_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>1</direction>
+          </rotor>
+          <rotor>
+            <jointName>rotor_2_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>-1</direction>
+          </rotor>
+          <rotor>
+            <jointName>rotor_3_joint</jointName>
+            <forceConstant>8.54858e-06</forceConstant>
+            <momentConstant>0.016</momentConstant>
+            <direction>-1</direction>
+          </rotor>
+        </rotorConfiguration>
+      </plugin>
+
+      <!-- Camera visual (small cylinder showing camera position) -->
+      <link name="cam_visual_link">
+        <pose relative_to="base_link">0 0 0.3 0 0.1309 0</pose>
+        <inertial>
+          <mass>0.001</mass>
+          <inertia>
+            <ixx>0.000001</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.000001</iyy><iyz>0</iyz>
+            <izz>0.000001</izz>
+          </inertia>
+        </inertial>
+        <visual name="cam_link_visual">
+          <geometry>
+            <cylinder>
+              <radius>.005</radius>
+              <length>.018</length>
+            </cylinder>
+          </geometry>
+        </visual>
+      </link>
+      <joint name="cam_visual_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>cam_visual_link</child>
+      </joint>
+
+      <!-- Odometry publisher -->
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>drone/odom</odom_frame>
+        <robot_base_frame>drone</robot_base_frame>
+        <odom_publish_frequency>50</odom_publish_frequency>
+      </plugin>
+
+    </model>
+
+  </world>
+</sdf>
