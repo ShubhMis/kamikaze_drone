@@ -383,6 +383,7 @@ def main():
 
     # PID gains
     ALT_KP,       ALT_KD       = 1.2,  0.4   # altitude hold
+    PID_PITCH_KP, PID_PITCH_KD = 0.18, 0.04
     YAW_RATE_MAX  = 1.5   # rad/s clamp on az
     VZ_MAX        = 2.5   # m/s clamp on vz
     # Direct proportional yaw gain (rad/s per rad of pixel error)
@@ -411,6 +412,7 @@ def main():
 
     # ── PID objects ──────────────────────────────────────────
     pid_alt   = PID(ALT_KP, ALT_KD)
+    pid_pitch = PID(PID_PITCH_KP, PID_PITCH_KD)
 
     # ── State ────────────────────────────────────────────────
     phase      = "INIT"
@@ -454,7 +456,7 @@ def main():
             tracker = cv2.TrackerCSRT_create()
             tracker.init(current_frame, bbox)
             
-            pid_yaw.reset(); pid_pitch.reset(); pid_alt.reset()
+            pid_pitch.reset(); pid_alt.reset()
             phase = "TRACK"
             tracked_bbox = bbox
             print(f"\n  [CLICK] Tracker initialized at {bbox} | diving to target")
