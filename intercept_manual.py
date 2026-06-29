@@ -1,32 +1,27 @@
 #!/usr/bin/env python3
 """
-intercept_manual.py — Click-to-Intercept
+intercept_manual.py — Kalman-Filter Click-to-Intercept
 ══════════════════════════════════════════════════════════════════
-Click any pixel in the FOV window → drone steers toward that point.
-No blob detection. No tracker. No search phase.
+Click any target in the FOV → drone steers and dives at it.
 
-How it works:
-  1. ARM + CLIMB to --alt metres.
-  2. Show live camera feed. Drone hovers.
-  3. LEFT-CLICK  → set intercept pixel. Drone PID-steers toward it.
-  4. RIGHT-CLICK → clear target. Drone hovers in place.
-  5. 'q' → quit.
+Tracking:
+  Kalman Filter (4-state: x, y, vx, vy in pixel space) fused with
+  OpenCV CSRT visual tracker.  When CSRT loses the target, the KF
+  continues predicting for up to PREDICT_TIMEOUT seconds so the
+  drone keeps flying toward the last known trajectory instead of
+  aborting.
 
-PID:
-  yaw_err  (pixel_x - cx) → pid_yaw  → gz angular.z (turn)
-  pitch_err(pixel_y - cy) → pid_pitch → gz linear.z  (climb/sink)
-  Forward speed is constant while a target pixel is set.
+Guidance:
+  • Yaw:   direct proportional  az = -K * yaw_err_rad  (from pixelToAngle)
+  • Pitch: PID on pitch_err_rad drives lz (descend toward target)
+  • Forward: constant CRUISE_SPEED while tracking
 
-HUD (simple):
-  • Global position (X / Y / Z) large and clear — top-left
-  • Heading, altitude, speed — top-right
-  • Crosshair at frame centre
-  • Yellow circle at clicked pixel + line from crosshair
-  • Yaw error / pitch error to clicked point
+Reference:
+  Dhanur_New/utils/calculations.py  — pixelToAngle, PID
+  PN_simulation_3D.py               — proportional navigation concept
 
 Usage:
-  python3 kamikaze/intercept_manual.py --alt 50 --speed 4.0
-  python3 kamikaze/intercept_manual.py --alt 30
+  python3 kamikaze/intercept_manual.py --alt 30 --speed 4.0
 ══════════════════════════════════════════════════════════════════
 """
 
@@ -48,7 +43,7 @@ import numpy as np
 # ═══════════════════════════════════════════════════════════════
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Click-to-Intercept")
+    p = argparse.ArgumentParser(description="Kalman-Filter Click-to-Intercept")
     p.add_argument("--alt",   type=float, default=50.0,
                    help="Mission altitude metres (default 50)")
     p.add_argument("--speed", type=float, default=4.0,
@@ -59,7 +54,7 @@ def parse_args():
 
 
 # ═══════════════════════════════════════════════════════════════
-#  CAMERA GEOMETRY
+#  CAMERA GEOMETRY  (matches Gazebo SDF camera)
 # ═══════════════════════════════════════════════════════════════
 
 IMG_W    = 1280
@@ -71,35 +66,117 @@ CX, CY   = IMG_W / 2.0, IMG_H / 2.0
 
 
 # ═══════════════════════════════════════════════════════════════
-#  PID
+#  PID  (identical to Dhanur_New/utils/calculations.py)
 # ═══════════════════════════════════════════════════════════════
 
 class PID:
-    def __init__(self, kp, kd=0.0, ki=0.0, i_lim=8.0):
-        self.kp, self.kd, self.ki = kp, kd, ki
-        self.I = self.last_e = 0.0
+    def __init__(self, kp, ki=0.0, kd=0.0, i_lim=10.0):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.I = 0.0
+        self.last_e = 0.0
         self.last_t = time.time()
-        self.i_lim  = i_lim
+        self.i_lim = i_lim
 
     def compute(self, e):
-        now = time.time()
-        dt  = max(1e-4, now - self.last_t)
-        P   = self.kp * e
-        self.I = max(-self.i_lim, min(self.i_lim, self.I + e * dt))
-        D   = self.kd * (e - self.last_e) / dt
-        self.last_e, self.last_t = e, now
-        return P + self.ki * self.I + D
+        t = time.time()
+        dt = max(1e-6, t - self.last_t)
+        P = self.kp * e
+        self.I += e * dt
+        self.I = max(-self.i_lim, min(self.I, self.i_lim))
+        D = self.kd * ((e - self.last_e) / dt)
+        out = P + self.ki * self.I + D
+        self.last_e = e
+        self.last_t = t
+        return out
 
     def reset(self):
-        self.I = self.last_e = 0.0
+        self.I = 0.0
+        self.last_e = 0.0
         self.last_t = time.time()
 
 
 # ═══════════════════════════════════════════════════════════════
-#  MATHS
+#  KALMAN FILTER  (4-state pixel tracker)
 # ═══════════════════════════════════════════════════════════════
 
-def clamp(v, lo, hi): return max(lo, min(hi, v))
+class PixelKalmanFilter:
+    """
+    State:  [x, y, vx, vy]  in pixel coordinates.
+    Measurement: [x, y]  from CSRT or click.
+
+    This filter smooths the tracking and predicts forward when
+    the visual tracker temporarily loses the target, preventing
+    the drone from aborting and flying off randomly.
+    """
+
+    def __init__(self, x0, y0, process_noise=5.0, meas_noise=3.0):
+        self.kf = cv2.KalmanFilter(4, 2)
+
+        # State: [x, y, vx, vy]
+        self.kf.statePost = np.array([[x0], [y0], [0.0], [0.0]], dtype=np.float32)
+
+        # Transition matrix (constant velocity model)
+        dt = 1.0 / 20.0  # ~20 Hz control loop
+        self.kf.transitionMatrix = np.array([
+            [1, 0, dt,  0],
+            [0, 1,  0, dt],
+            [0, 0,  1,  0],
+            [0, 0,  0,  1],
+        ], dtype=np.float32)
+
+        # Measurement matrix: we observe x, y
+        self.kf.measurementMatrix = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+        ], dtype=np.float32)
+
+        # Process noise covariance
+        q = process_noise
+        self.kf.processNoiseCov = np.array([
+            [q,   0,   0,   0],
+            [0,   q,   0,   0],
+            [0,   0, q*4,   0],
+            [0,   0,   0, q*4],
+        ], dtype=np.float32)
+
+        # Measurement noise covariance
+        r = meas_noise
+        self.kf.measurementNoiseCov = np.array([
+            [r, 0],
+            [0, r],
+        ], dtype=np.float32)
+
+        # Error covariance
+        self.kf.errorCovPost = np.eye(4, dtype=np.float32) * 10.0
+
+    def predict(self):
+        """Predict next state. Returns (x, y)."""
+        pred = self.kf.predict()
+        return float(pred[0, 0]), float(pred[1, 0])
+
+    def correct(self, mx, my):
+        """Update with measurement. Returns corrected (x, y)."""
+        meas = np.array([[mx], [my]], dtype=np.float32)
+        corrected = self.kf.correct(meas)
+        return float(corrected[0, 0]), float(corrected[1, 0])
+
+    def get_position(self):
+        """Current estimated position."""
+        s = self.kf.statePost
+        return float(s[0, 0]), float(s[1, 0])
+
+    def get_velocity(self):
+        """Current estimated pixel velocity."""
+        s = self.kf.statePost
+        return float(s[2, 0]), float(s[3, 0])
+
+
+# ═══════════════════════════════════════════════════════════════
+#  MATHS  (pixelToAngle matches Dhanur_New exactly)
+# ═══════════════════════════════════════════════════════════════
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 def normalize_angle(a):
     while a >  math.pi: a -= 2 * math.pi
@@ -109,14 +186,12 @@ def normalize_angle(a):
 def quat_to_yaw(x, y, z, w):
     return math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z))
 
-def world_to_body(vx, vy, yaw):
-    c, s = math.cos(yaw), math.sin(yaw)
-    return c*vx + s*vy, -s*vx + c*vy
-
 def pixel_to_angle(px, py):
-    """Return (yaw_offset_rad, pitch_offset_rad) from frame centre."""
-    return (math.atan2(px - CX, FX),
-            math.atan2(py - CY, FY))
+    """Return (yaw_err_rad, pitch_err_rad) from frame centre.
+    Identical to Dhanur_New pixelToAngle but in radians."""
+    dx = px - CX
+    dy = py - CY
+    return (math.atan2(dx, FX), math.atan2(dy, FY))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -124,7 +199,6 @@ def pixel_to_angle(px, py):
 # ═══════════════════════════════════════════════════════════════
 
 def _gz_one(topic, timeout=2.0):
-    """Yield raw bytes of one Gazebo message via subprocess."""
     while True:
         try:
             r = subprocess.run(
@@ -144,7 +218,7 @@ def build_transport(world, drone):
                     f"/link/camera_link/sensor/camera/image")
     POSE_TOPIC   = f"/world/{world}/dynamic_pose/info"
 
-    # ── try native gz.transport ───────────────────────────────
+    # try native gz.transport
     for tr_mod, ms_mod, ps_mod in [
         ("gz.transport13", "gz.msgs10.image_pb2", "gz.msgs10.pose_v_pb2"),
         ("gz.transport12", "gz.msgs9.image_pb2",  "gz.msgs9.pose_v_pb2"),
@@ -200,7 +274,7 @@ def build_transport(world, drone):
         except Exception:
             continue
 
-    # ── subprocess fallback ───────────────────────────────────
+    # subprocess fallback
     print("[WARN] gz.transport not found — subprocess fallback")
 
     class _CamSub:
@@ -294,78 +368,81 @@ def gz_enable(drone, on):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  SIMPLE HUD DRAW
+#  HUD
 # ═══════════════════════════════════════════════════════════════
 
 FT   = cv2.FONT_HERSHEY_DUPLEX
 FTS  = cv2.FONT_HERSHEY_SIMPLEX
 AA   = cv2.LINE_AA
 C_W  = (255,255,255)
-C_Y  = (  0,220,255)   # yellow-cyan  (headings)
-C_G  = (  0,200, 80)   # green  (ok)
-C_R  = (  0,  0,220)   # red    (active)
-C_O  = (  0,165,255)   # orange (click target)
-C_D  = (160,160,160)   # dim
+C_Y  = (  0,220,255)
+C_G  = (  0,200, 80)
+C_R  = (  0,  0,220)
+C_O  = (  0,165,255)
+C_D  = (160,160,160)
+C_B  = (255,100,  0)   # blue for KF prediction
 
 
-def draw_hud(frame, dp, yaw_rad, phase, tracked_bbox,
-             mission_alt, speed):
+def draw_hud(frame, dp, yaw_rad, phase, kf_pos, kf_bbox,
+             mission_alt, speed, csrt_ok):
     out = frame.copy()
     h, w = out.shape[:2]
     cx, cy = int(CX), int(CY)
 
-    # ── semi-transparent top bar ──────────────────────────────
+    # crosshair at centre
+    cv2.line(out, (cx-20, cy), (cx+20, cy), C_W, 1, AA)
+    cv2.line(out, (cx, cy-20), (cx, cy+20), C_W, 1, AA)
+
+    # semi-transparent top bar
     ov = out.copy()
     cv2.rectangle(ov, (0,0), (w, 80), (0,0,0), -1)
     cv2.addWeighted(ov, 0.55, out, 0.45, 0, out)
 
-    # ── global position — large, top-left ─────────────────────
+    # global position
     x_w = dp[0] if dp else 0.0
     y_w = dp[1] if dp else 0.0
     z_w = dp[2] if dp else 0.0
-    cv2.putText(out, "GLOBAL POSITION", (12, 26),
-                FT, 0.70, C_D, 1, AA)
+    cv2.putText(out, "GLOBAL POSITION", (12, 26), FT, 0.70, C_D, 1, AA)
     pos_txt = f"X:{x_w:8.2f}m   Y:{y_w:8.2f}m   Z:{z_w:8.2f}m"
-    cv2.putText(out, pos_txt, (12, 60),
-                FT, 0.90, C_W, 2, AA)
+    cv2.putText(out, pos_txt, (12, 60), FT, 0.90, C_W, 2, AA)
 
-    # ── right side: heading / alt / speed ────────────────────
+    # heading / alt / speed
     hdg_deg = (math.degrees(yaw_rad) % 360.0) if yaw_rad else 0.0
-    course   = (90.0 - hdg_deg) % 360.0
-    r1 = f"HDG: {hdg_deg:05.1f}°   CRS: {course:05.1f}°"
-    r2 = f"ALT: {z_w:5.1f}m / {mission_alt:.0f}m   SPD: {speed:.1f}m/s"
+    course  = (90.0 - hdg_deg) % 360.0
+    r1 = f"HDG: {hdg_deg:05.1f}   CRS: {course:05.1f}"
+    r2 = f"ALT: {z_w:5.1f}m   SPD: {speed:.1f}m/s"
     tw1 = cv2.getTextSize(r1, FT, 0.75, 2)[0][0]
     tw2 = cv2.getTextSize(r2, FT, 0.75, 2)[0][0]
     cv2.putText(out, r1, (w - tw1 - 12, 30), FT, 0.75, C_Y, 2, AA)
     cv2.putText(out, r2, (w - tw2 - 12, 65), FT, 0.75, C_Y, 2, AA)
 
-    # ── phase badge ───────────────────────────────────────────
-    ph_col = {
-        "IDLE":       (120,120,120),
-        "CLIMB":      C_G,
-        "INTERCEPT":  C_R,
-    }.get(phase, C_D)
-    cv2.putText(out, f"[ {phase} ]", (12, h - 14),
-                FT, 1.0, ph_col, 2, AA)
+    # phase badge
+    ph_col = {"IDLE": (120,120,120), "CLIMB": C_G, "TRACK": C_R,
+              "MANUAL": C_O, "KF_PREDICT": C_B}.get(phase, C_D)
+    cv2.putText(out, f"[ {phase} ]", (12, h - 50), FT, 1.0, ph_col, 2, AA)
 
-    # ── if TRACK: show bounding box ───────────────────────────
-    if phase == "TRACK" and tracked_bbox is not None:
-        tx, ty, tw, th = tracked_bbox
-        cv2.rectangle(out, (tx, ty), (tx+tw, ty+th), C_O, 2, AA)
-        bcx, bcy = tx + tw//2, ty + th//2
-        cv2.circle(out, (bcx, bcy), 4, C_O, -1)
-        cv2.line(out, (cx, cy), (bcx, bcy), C_O, 1, AA)
-        cv2.putText(out, "TRACKING", (tx, ty - 6),
-                    FT, 0.60, C_O, 2, AA)
+    # KF / tracker visualization
+    if phase in ("TRACK", "KF_PREDICT") and kf_pos is not None:
+        kx, ky = int(kf_pos[0]), int(kf_pos[1])
+        # KF estimated centre
+        col = C_O if csrt_ok else C_B
+        label = "TRACKING" if csrt_ok else "KF PREDICT"
+        cv2.circle(out, (kx, ky), 6, col, -1)
+        cv2.line(out, (cx, cy), (kx, ky), col, 2, AA)
+        cv2.putText(out, label, (kx + 10, ky - 10), FT, 0.55, col, 2, AA)
 
-    # ── hint bar ──────────────────────────────────────────────
-    hint = "LEFT-CLICK: set intercept point   RIGHT-CLICK: hover   Q: quit"
+    # CSRT bbox
+    if kf_bbox is not None and csrt_ok:
+        tx, ty, tw_b, th_b = kf_bbox
+        cv2.rectangle(out, (tx, ty), (tx+tw_b, ty+th_b), C_O, 2, AA)
+
+    # hint bar
+    hint = "CLICK: intercept  |  RCLICK: hover  |  WASD/IJKL: manual  |  Q: quit"
     ov2 = out.copy()
     cv2.rectangle(ov2, (0, h-40), (w, h), (0,0,0), -1)
     cv2.addWeighted(ov2, 0.50, out, 0.50, 0, out)
     tw = cv2.getTextSize(hint, FTS, 0.45, 1)[0][0]
-    cv2.putText(out, hint, (w//2 - tw//2, h - 14),
-                FTS, 0.45, C_D, 1, AA)
+    cv2.putText(out, hint, (w//2 - tw//2, h - 14), FTS, 0.45, C_D, 1, AA)
 
     return out
 
@@ -375,24 +452,24 @@ def draw_hud(frame, dp, yaw_rad, phase, tracked_bbox,
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    args      = parse_args()
+    args         = parse_args()
     MISSION_ALT  = args.alt
     CRUISE_SPEED = args.speed
     DRONE        = args.drone
     WORLD        = args.world
 
-    # PID gains
-    ALT_KP,       ALT_KD       = 1.2,  0.4   # altitude hold
-    PID_PITCH_KP, PID_PITCH_KD = 0.18, 0.04
-    YAW_RATE_MAX  = 1.5   # rad/s clamp on az
-    VZ_MAX        = 2.5   # m/s clamp on vz
-    # Direct proportional yaw gain (rad/s per rad of pixel error)
-    # At 45° (0.785 rad) error: 2.5 * 0.785 = 1.96 → clamped to 1.5 rad/s
-    # At  5° (0.087 rad) error: 2.5 * 0.087 = 0.22 rad/s  (gentle)
-    YAW_KP_DIRECT = 2.5
+    # ── Tuning constants ─────────────────────────────────────
+    ALT_KP, ALT_KD       = 1.2, 0.4
+    PID_PITCH_KP          = 0.20
+    PID_PITCH_KD          = 0.05
+    YAW_RATE_MAX          = 1.5      # rad/s
+    VZ_MAX                = 3.0      # m/s
+    YAW_KP_DIRECT         = 2.5      # rad/s per rad error
+    PREDICT_TIMEOUT       = 2.0      # seconds of KF-only prediction before abort
+    CSRT_BOX_SIZE         = 80       # initial CSRT bbox size (pixels)
 
     print("\n" + "═"*60)
-    print("  INTERCEPT MANUAL — Click-to-Intercept")
+    print("  INTERCEPT MANUAL — Kalman Filter Click-to-Intercept")
     print("═"*60)
 
     # ── Wait for Gazebo ──────────────────────────────────────
@@ -411,19 +488,21 @@ def main():
     cam, poses = build_transport(WORLD, DRONE)
 
     # ── PID objects ──────────────────────────────────────────
-    pid_alt   = PID(ALT_KP, ALT_KD)
-    pid_pitch = PID(PID_PITCH_KP, PID_PITCH_KD)
+    pid_alt   = PID(kp=ALT_KP, kd=ALT_KD)
+    pid_pitch = PID(kp=PID_PITCH_KP, kd=PID_PITCH_KD)
 
     # ── State ────────────────────────────────────────────────
-    phase      = "INIT"
-    armed      = False
-    tracker    = None
-    tracked_bbox = None
-    
-    # We need access to 'frame' in the mouse callback for tracker init
+    phase        = "INIT"
+    armed        = False
+    tracker      = None          # CSRT tracker
+    kf           = None          # Kalman filter
+    csrt_ok      = False         # was CSRT successful this frame?
+    last_csrt_ok = 0.0           # timestamp of last successful CSRT update
+    kf_pos       = None          # (x, y) from KF
+    kf_bbox      = None          # (x, y, w, h) last known CSRT bbox
     current_frame = None
-    hover_alt = None
-    manual_cmd = {"lx": 0, "ly": 0, "lz": 0, "az": 0}
+    hover_alt    = None
+    manual_cmd   = {"lx": 0, "ly": 0, "lz": 0, "az": 0}
     last_key_time = 0
 
     # ── Keepalive ────────────────────────────────────────────
@@ -434,50 +513,64 @@ def main():
             stop_ev.wait(0.25)
     threading.Thread(target=keepalive, daemon=True).start()
 
-    # ── OpenCV window + mouse ─────────────────────────────────
-    WIN = "INTERCEPT MANUAL - Click to set target"
+    # ── OpenCV window + mouse ────────────────────────────────
+    WIN = "INTERCEPT — Kalman Filter Tracker"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN, 1280, 960)
-    cv2.waitKey(1)   # flush Qt event loop so window handle is valid
+    cv2.waitKey(1)
 
     def on_mouse(event, x, y, flags, _):
-        nonlocal phase, tracker, tracked_bbox
+        nonlocal phase, tracker, kf, csrt_ok, last_csrt_ok
+        nonlocal kf_pos, kf_bbox, hover_alt
+
         if event == cv2.EVENT_LBUTTONDOWN:
-            if not poses.ready() or current_frame is None: return
-            
-            # Create a 60x60 bounding box around the click
-            box_w, box_h = 60, 60
-            x1 = max(0, x - box_w // 2)
-            y1 = max(0, y - box_h // 2)
-            w_box = min(IMG_W - x1, box_w)
-            h_box = min(IMG_H - y1, box_h)
-            bbox = (x1, y1, w_box, h_box)
-            
+            if not poses.ready() or current_frame is None:
+                return
+
+            # Init CSRT around click
+            bsz = CSRT_BOX_SIZE
+            x1 = max(0, x - bsz // 2)
+            y1 = max(0, y - bsz // 2)
+            w_b = min(IMG_W - x1, bsz)
+            h_b = min(IMG_H - y1, bsz)
+            bbox = (x1, y1, w_b, h_b)
+
             tracker = cv2.TrackerCSRT_create()
             tracker.init(current_frame, bbox)
-            
-            pid_pitch.reset(); pid_alt.reset()
+
+            # Init Kalman Filter at click position
+            kf = PixelKalmanFilter(float(x), float(y))
+            kf_pos = (float(x), float(y))
+            kf_bbox = (x1, y1, w_b, h_b)
+            csrt_ok = True
+            last_csrt_ok = time.monotonic()
+
+            pid_pitch.reset()
+            pid_alt.reset()
             phase = "TRACK"
-            tracked_bbox = bbox
-            print(f"\n  [CLICK] Tracker initialized at {bbox} | diving to target")
-        
+            hover_alt = None
+            print(f"\n  [CLICK] Target locked at ({x}, {y})")
+
         elif event == cv2.EVENT_RBUTTONDOWN:
             tracker = None
-            tracked_bbox = None
-            if phase in ["TRACK", "MANUAL"]:
+            kf = None
+            kf_pos = None
+            kf_bbox = None
+            csrt_ok = False
+            if phase in ("TRACK", "KF_PREDICT", "MANUAL"):
                 phase = "IDLE"
                 hover_alt = None
-            print("\n  [RIGHT-CLICK] cleared → HOVER")
+            print("\n  [RIGHT-CLICK] → HOVER")
 
     cv2.setMouseCallback(WIN, on_mouse)
 
     print(f"\n  Drone      : {DRONE}")
     print(f"  Altitude   : {MISSION_ALT} m   (--alt)")
     print(f"  Fwd speed  : {CRUISE_SPEED} m/s (--speed)")
-    print(f"\n  LEFT-CLICK  → intercept clicked point")
+    print(f"\n  LEFT-CLICK  → lock target (Kalman + CSRT)")
     print(f"  RIGHT-CLICK → hover")
-    print(f"  WASD/IJKL   → manual override (OpenCV window must be focused)")
-    print(f"  Q           → quit\n")
+    print(f"  WASD/IJKL   → manual override")
+    print(f"  Q / ESC     → quit\n")
 
     CONTROL_HZ = 20
     dt_target  = 1.0 / CONTROL_HZ
@@ -496,7 +589,7 @@ def main():
             frame = cam.get_frame()
             current_frame = frame
 
-            # ── INIT: wait for pose ──────────────────────────
+            # ── INIT: wait for pose ─────────────────────────
             if phase == "INIT":
                 if poses.ready() and dp:
                     print(f"  ✓ Pose: ({dp[0]:.1f}, {dp[1]:.1f}, {dp[2]:.1f})")
@@ -509,22 +602,20 @@ def main():
                     print(f"  → CLIMB to {MISSION_ALT}m")
                 else:
                     if frame is not None:
-                        placeholder = draw_hud(
-                            frame, dp, dy, "WAIT FOR POSE",
-                            None, None, MISSION_ALT, 0)
-                        cv2.imshow(WIN, placeholder)
+                        hud = draw_hud(frame, dp, dy, "WAIT", None, None,
+                                       MISSION_ALT, 0, False)
+                        cv2.imshow(WIN, hud)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
                     time.sleep(0.1)
                     continue
 
-            # ── CLIMB ────────────────────────────────────────
+            # ── CLIMB ───────────────────────────────────────
             if phase == "CLIMB":
                 alt_err = MISSION_ALT - alt
                 vz = clamp(pid_alt.compute(alt_err), -2.0, 2.5)
                 if alt < 2.0: vz = max(vz, 2.5)
 
-                # Gentle yaw to face north (0°) while climbing
                 desired_yaw = 0.0
                 yaw_cmd = clamp(
                     1.2 * normalize_angle(desired_yaw - dy),
@@ -537,9 +628,10 @@ def main():
                 if abs(alt_err) < 2.0 and alt > 4.0:
                     pid_alt.reset()
                     phase = "IDLE"
+                    hover_alt = alt
                     print(f"\n  ✓ Altitude reached. Click to intercept.")
 
-            # ── IDLE: hover ──────────────────────────────────
+            # ── IDLE: hover at current alt ──────────────────
             elif phase == "IDLE":
                 if hover_alt is None:
                     hover_alt = max(alt, 1.0)
@@ -548,96 +640,143 @@ def main():
                 vz = clamp(pid_alt.compute(alt_err), -1.5, 1.5)
                 gz_twist(DRONE, lz=vz)
 
-            # ── MANUAL: keyboard control ─────────────────────
+            # ── MANUAL: keyboard control ────────────────────
             elif phase == "MANUAL":
-                if time.monotonic() - last_key_time < 0.2:
+                if time.monotonic() - last_key_time < 0.25:
                     gz_twist(DRONE, **manual_cmd)
-                    print(f"\r  MANUAL  lx:{manual_cmd['lx']:+.1f} ly:{manual_cmd['ly']:+.1f} lz:{manual_cmd['lz']:+.1f} az:{manual_cmd['az']:+.1f}  alt:{alt:.1f}m   ", end="", flush=True)
+                    print(f"\r  MANUAL  lx:{manual_cmd['lx']:+.1f} "
+                          f"ly:{manual_cmd['ly']:+.1f} "
+                          f"lz:{manual_cmd['lz']:+.1f} "
+                          f"az:{manual_cmd['az']:+.1f}  "
+                          f"alt:{alt:.1f}m   ", end="", flush=True)
                 else:
                     print("\n  [MANUAL] Key released → HOVER")
                     phase = "IDLE"
                     hover_alt = None
 
-            # ── TRACK: pixel-align yaw and pitch ───────────────────────
-            elif phase == "TRACK":
-                if tracker is None or frame is None:
+            # ── TRACK / KF_PREDICT ──────────────────────────
+            elif phase in ("TRACK", "KF_PREDICT"):
+                if kf is None or frame is None:
                     phase = "IDLE"
                     hover_alt = None
                 else:
-                    ok, bbox = tracker.update(frame)
-                    if ok:
-                        x1, y1, w_box, h_box = bbox
-                        tracked_bbox = (int(x1), int(y1), int(w_box), int(h_box))
+                    # Step 1: KF predict
+                    pred_x, pred_y = kf.predict()
 
-                        bcx = x1 + w_box / 2.0
-                        bcy = y1 + h_box / 2.0
+                    # Step 2: Try CSRT update
+                    csrt_ok = False
+                    if tracker is not None:
+                        ok, bbox = tracker.update(frame)
+                        if ok:
+                            bx, by, bw, bh = bbox
+                            meas_x = bx + bw / 2.0
+                            meas_y = by + bh / 2.0
 
-                        # ── Pixel → angle (same as Dhanur tracker.py pixelToAngle) ─
-                        yaw_err_rad, pitch_err_rad = pixel_to_angle(bcx, bcy)
+                            # Only accept if measurement is within frame
+                            if 0 <= meas_x <= IMG_W and 0 <= meas_y <= IMG_H:
+                                kf.correct(meas_x, meas_y)
+                                kf_bbox = (int(bx), int(by), int(bw), int(bh))
+                                csrt_ok = True
+                                last_csrt_ok = time.monotonic()
 
-                        # ── YAW: direct proportional ───────────────────────
-                        az = clamp(-YAW_KP_DIRECT * yaw_err_rad, -YAW_RATE_MAX, YAW_RATE_MAX)
+                    # Step 3: Get KF position (corrected if CSRT ok, predicted if not)
+                    est_x, est_y = kf.get_position()
 
-                        # ── ALTITUDE / PITCH: dive at target ───────────────────
-                        # pitch_err_rad > 0 → target is below centre → descend
+                    # Clamp to frame bounds
+                    est_x = clamp(est_x, 0, IMG_W)
+                    est_y = clamp(est_y, 0, IMG_H)
+                    kf_pos = (est_x, est_y)
+
+                    # Step 4: Check timeout
+                    time_since_csrt = time.monotonic() - last_csrt_ok
+                    if not csrt_ok and time_since_csrt > PREDICT_TIMEOUT:
+                        print(f"\n  [KF] Prediction timeout ({PREDICT_TIMEOUT}s) → HOVER")
+                        tracker = None
+                        kf = None
+                        kf_pos = None
+                        kf_bbox = None
+                        phase = "IDLE"
+                        hover_alt = None
+                    else:
+                        # Update phase label
+                        phase = "TRACK" if csrt_ok else "KF_PREDICT"
+
+                        # Step 5: Compute guidance
+                        yaw_err_rad, pitch_err_rad = pixel_to_angle(est_x, est_y)
+
+                        # Yaw: direct proportional
+                        az = clamp(-YAW_KP_DIRECT * yaw_err_rad,
+                                   -YAW_RATE_MAX, YAW_RATE_MAX)
+
+                        # Pitch: PID drives vz (descend toward ground target)
                         pitch_cmd = pid_pitch.compute(pitch_err_rad)
                         vz = clamp(-pitch_cmd * 3.5, -VZ_MAX, VZ_MAX)
 
                         gz_twist(DRONE, lx=CRUISE_SPEED, ly=0.0, lz=vz, az=az)
 
-                        print(f"\r  TRACK  "
-                              f"yaw_err: {math.degrees(yaw_err_rad):+.1f}°  "
-                              f"pitch_err: {math.degrees(pitch_err_rad):+.1f}°  "
-                              f"az: {az:+.3f}  vz: {vz:+.2f}  "
-                              f"alt: {alt:.1f}m   ",
+                        src = "CSRT" if csrt_ok else f"KF({time_since_csrt:.1f}s)"
+                        print(f"\r  {phase}  "
+                              f"src:{src}  "
+                              f"yaw:{math.degrees(yaw_err_rad):+.1f}°  "
+                              f"pitch:{math.degrees(pitch_err_rad):+.1f}°  "
+                              f"az:{az:+.3f}  vz:{vz:+.2f}  "
+                              f"alt:{alt:.1f}m   ",
                               end="", flush=True)
-                    else:
-                        print("\n  [TRACK] Target lost — hovering")
-                        tracker = None
-                        tracked_bbox = None
-                        phase = "IDLE"
-                        hover_alt = None
 
-            # ── Render FOV ───────────────────────────────────
+                        # Re-init CSRT from KF prediction if we lost it
+                        # but KF is still within frame and timeout hasn't hit
+                        if not csrt_ok and time_since_csrt > 0.5:
+                            rx = int(clamp(est_x - CSRT_BOX_SIZE/2, 0, IMG_W - CSRT_BOX_SIZE))
+                            ry = int(clamp(est_y - CSRT_BOX_SIZE/2, 0, IMG_H - CSRT_BOX_SIZE))
+                            new_bbox = (rx, ry, CSRT_BOX_SIZE, CSRT_BOX_SIZE)
+                            tracker = cv2.TrackerCSRT_create()
+                            tracker.init(frame, new_bbox)
+                            kf_bbox = new_bbox
+
+            # ── Render ──────────────────────────────────────
             if frame is not None:
-                spd = CRUISE_SPEED if phase == "TRACK" else 0.0
-                hud = draw_hud(frame, dp, dy, phase, tracked_bbox,
-                               MISSION_ALT, spd)
+                spd = CRUISE_SPEED if phase in ("TRACK", "KF_PREDICT") else 0.0
+                hud = draw_hud(frame, dp, dy, phase, kf_pos, kf_bbox,
+                               MISSION_ALT, spd, csrt_ok)
                 cv2.imshow(WIN, hud)
 
+            # ── Keyboard ────────────────────────────────────
             key = cv2.waitKeyEx(1)
             if key != -1:
                 k = key & 0xFFFF
-                if k in (ord('q'), 27): # q or ESC
-                    print("\n  [QUIT] q pressed")
+                if k in (ord('q'), 27):
+                    print("\n  [QUIT]")
                     break
-                elif k == ord('c'):       # keyboard clear
-                    tracker = tracked_bbox = None
-                    if phase in ["TRACK", "MANUAL"]:
+                elif k == ord('c'):
+                    tracker = kf = None
+                    kf_pos = kf_bbox = None
+                    csrt_ok = False
+                    if phase in ("TRACK", "KF_PREDICT", "MANUAL"):
                         phase = "IDLE"
                         hover_alt = None
-                    print("\n  [C] target cleared → HOVER")
-                elif phase in ["IDLE", "MANUAL", "TRACK"]:
-                    # Keyboard override
+                    print("\n  [C] cleared → HOVER")
+                elif phase in ("IDLE", "MANUAL", "TRACK", "KF_PREDICT"):
                     moved = False
-                    lx = ly = lz = az = 0.0
-                    
-                    if k == ord('i'): lx = CRUISE_SPEED; moved=True
-                    elif k == ord('k'): lx = -CRUISE_SPEED; moved=True
-                    elif k == ord('a'): ly = CRUISE_SPEED; moved=True
-                    elif k == ord('d'): ly = -CRUISE_SPEED; moved=True
-                    elif k in (ord('w'), 65362): lz = VZ_MAX; moved=True
-                    elif k in (ord('s'), 65364): lz = -VZ_MAX; moved=True
-                    elif k == ord('j'): az = YAW_RATE_MAX; moved=True
-                    elif k == ord('l'): az = -YAW_RATE_MAX; moved=True
-                    
+                    lx = ly = lz = az_k = 0.0
+
+                    if   k == ord('i'): lx = CRUISE_SPEED; moved = True
+                    elif k == ord('k'): lx = -CRUISE_SPEED; moved = True
+                    elif k == ord('a'): ly = CRUISE_SPEED; moved = True
+                    elif k == ord('d'): ly = -CRUISE_SPEED; moved = True
+                    elif k in (ord('w'), 65362): lz = VZ_MAX; moved = True
+                    elif k in (ord('s'), 65364): lz = -VZ_MAX; moved = True
+                    elif k == ord('j'): az_k = YAW_RATE_MAX; moved = True
+                    elif k == ord('l'): az_k = -YAW_RATE_MAX; moved = True
+
                     if moved:
-                        tracker = tracked_bbox = None
+                        tracker = kf = None
+                        kf_pos = kf_bbox = None
+                        csrt_ok = False
                         phase = "MANUAL"
-                        manual_cmd = {"lx": lx, "ly": ly, "lz": lz, "az": az}
+                        manual_cmd = {"lx": lx, "ly": ly, "lz": lz, "az": az_k}
                         last_key_time = time.monotonic()
 
-            # ── Pace to CONTROL_HZ ────────────────────────────
+            # ── Pace ────────────────────────────────────────
             elapsed = time.monotonic() - t0
             time.sleep(max(0.0, dt_target - elapsed))
 
