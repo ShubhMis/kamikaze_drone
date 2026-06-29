@@ -462,11 +462,11 @@ def main():
 
     # ── Tuning constants ─────────────────────────────────────
     ALT_KP, ALT_KD       = 1.2, 0.4
-    PID_PITCH_KP          = 0.20
-    PID_PITCH_KD          = 0.05
-    YAW_RATE_MAX          = 1.5      # rad/s
-    VZ_MAX                = 3.0      # m/s
-    YAW_KP_DIRECT         = 2.5      # rad/s per rad error
+    PID_PITCH_KP          = 0.80     # Much more aggressive pitch -> vz tracking
+    PID_PITCH_KD          = 0.15
+    YAW_RATE_MAX          = 2.5      # rad/s (increased for faster heading alignment)
+    VZ_MAX                = 4.0      # m/s (increased for faster altitude snapping)
+    YAW_KP_DIRECT         = 4.5      # rad/s per rad error (aggressive yaw snapping)
     PREDICT_TIMEOUT       = 2.0      # seconds of KF-only prediction before abort
     CSRT_BOX_SIZE         = 80       # initial CSRT bbox size (pixels)
 
@@ -715,9 +715,9 @@ def main():
                         az = clamp(-YAW_KP_DIRECT * yaw_err_rad,
                                    -YAW_RATE_MAX, YAW_RATE_MAX)
 
-                        # Pitch: PID drives vz (descend toward ground target)
+                        # Pitch: PID drives vz (descend toward ground target, climb to air target)
                         pitch_cmd = pid_pitch.compute(pitch_err_rad)
-                        vz = clamp(-pitch_cmd * 3.5, -VZ_MAX, VZ_MAX)
+                        vz = clamp(-pitch_cmd * 6.0, -VZ_MAX, VZ_MAX)
 
                         gz_twist(DRONE, lx=CRUISE_SPEED, ly=0.0, lz=vz, az=az)
 
