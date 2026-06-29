@@ -35,8 +35,6 @@ import sys
 import threading
 import time
 
-# Force X11 backend — prevents Qt NULL window handle on Wayland/XWayland
-os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 import cv2
 import numpy as np
@@ -508,7 +506,6 @@ def main():
     hover_alt    = None
     manual_cmd   = {"lx": 0, "ly": 0, "lz": 0, "az": 0}
     last_key_time = 0
-    mouse_cb_set = False
 
     # ── Keepalive ────────────────────────────────────────────
     stop_ev = threading.Event()
@@ -519,17 +516,10 @@ def main():
     threading.Thread(target=keepalive, daemon=True).start()
 
     # ── OpenCV window + mouse ────────────────────────────────
-    WIN = "INTERCEPT — Kalman Filter Tracker"
+    WIN = "INTERCEPT_MANUAL"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN, 1280, 960)
-    # Pump Qt event loop until handle is confirmed live
-    blank = np.zeros((IMG_H, IMG_W, 3), dtype=np.uint8)
-    cv2.imshow(WIN, blank)
-    for _ in range(10):
-        cv2.waitKey(1)
-    time.sleep(0.2)
-    for _ in range(5):
-        cv2.waitKey(1)
+
 
     def on_mouse(event, x, y, flags, _):
         nonlocal phase, tracker, kf, csrt_ok, last_csrt_ok
@@ -574,7 +564,11 @@ def main():
                 hover_alt = None
             print("\n  [RIGHT-CLICK] → HOVER")
 
-    # Mouse callback will be set on the first rendered frame
+    # Register mouse callback — retry until Qt window handle is live
+    # Flush event loop
+    cv2.waitKey(10)
+
+    cv2.setMouseCallback(WIN, on_mouse)
 
 
     print(f"\n  Drone      : {DRONE}")
@@ -752,13 +746,6 @@ def main():
                 hud = draw_hud(frame, dp, dy, phase, kf_pos, kf_bbox,
                                MISSION_ALT, spd, csrt_ok)
                 cv2.imshow(WIN, hud)
-                
-                if not mouse_cb_set:
-                    try:
-                        cv2.setMouseCallback(WIN, on_mouse)
-                        mouse_cb_set = True
-                    except cv2.error:
-                        pass  # Window not fully mapped by Wayland yet; try again next frame
 
             # ── Keyboard ────────────────────────────────────
             key = cv2.waitKeyEx(1)
