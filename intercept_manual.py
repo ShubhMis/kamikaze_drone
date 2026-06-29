@@ -36,7 +36,7 @@ import threading
 import time
 
 # Force X11 backend — prevents Qt NULL window handle on Wayland/XWayland
-os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 import cv2
 import numpy as np
@@ -754,8 +754,11 @@ def main():
                 cv2.imshow(WIN, hud)
                 
                 if not mouse_cb_set:
-                    cv2.setMouseCallback(WIN, on_mouse)
-                    mouse_cb_set = True
+                    try:
+                        cv2.setMouseCallback(WIN, on_mouse)
+                        mouse_cb_set = True
+                    except cv2.error:
+                        pass  # Window not fully mapped by Wayland yet; try again next frame
 
             # ── Keyboard ────────────────────────────────────
             key = cv2.waitKeyEx(1)
