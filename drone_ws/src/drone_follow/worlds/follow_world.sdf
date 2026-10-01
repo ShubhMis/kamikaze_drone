@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <world name="follow_world">
+    <physics name="physics" type="ignored">
+      <max_step_size>0.004</max_step_size><real_time_factor>1.0</real_time_factor>
+    </physics>
+    <gravity>0 0 -9.80665</gravity>
+    <magnetic_field>6e-6 2.3e-5 -4.2e-5</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model><world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397742</latitude_deg><longitude_deg>8.545594</longitude_deg>
+      <elevation>488</elevation><heading_deg>0</heading_deg>
+    </spherical_coordinates>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"/>
+    <plugin filename="gz-sim-magnetometer-system" name="gz::sim::systems::Magnetometer"/>
+    <plugin filename="gz-sim-air-pressure-system" name="gz::sim::systems::AirPressure"/>
+    <scene><ambient>0.6 0.6 0.6 1</ambient><background>0.55 0.75 0.95 1</background><shadows>true</shadows></scene>
+    <light name="sun" type="directional">
+      <pose>0 0 50 0 0 0</pose><cast_shadows>true</cast_shadows>
+      <diffuse>0.9 0.9 0.9 1</diffuse><specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.2 -1</direction>
+      <attenuation><range>1000</range><constant>0.9</constant><linear>0.01</linear><quadratic>0.001</quadratic></attenuation>
+    </light>
+    <model name="ground">
+      <static>true</static>
+      <link name="ground_link">
+        <collision name="ground_collision"><geometry><plane><normal>0 0 1</normal><size>500 500</size></plane></geometry></collision>
+        <visual name="ground_visual">
+          <geometry><plane><normal>0 0 1</normal><size>500 500</size></plane></geometry>
+          <material><ambient>0.45 0.50 0.45 1</ambient><diffuse>0.45 0.50 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- Gazebo ENU: +X east, +Y north, +Z up. Both noses point east. -->
+    <include><uri>model://x500_follower</uri><name>follower</name><pose>0 0 0.25 0 0 0</pose></include>
+    <include><uri>model://x500_target</uri><name>target</name><pose>18 0 0.25 0 0 0</pose></include>
+  </world>
+</sdf>

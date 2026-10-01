@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<!-- Lesson 1: a standalone scene for learning SDF and basic physics. -->
+<sdf version="1.10">
+  <world name="robotics_playground">
+    <!-- A simulation step is 0.001 seconds; gravity points down. -->
+    <physics name="lesson_physics" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <gravity>0 0 -9.81</gravity>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <scene>
+      <ambient>0.5 0.5 0.5 1</ambient>
+      <background>0.12 0.17 0.25 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <light name="sun" type="directional">
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.2 -1</direction>
+      <cast_shadows>true</cast_shadows>
+    </light>
+
+    <!-- MODEL: an object. LINK: one rigid body in that object.
+         VISUAL: what you see. COLLISION: what physics can touch. -->
+    <model name="ground">
+      <static>true</static>
+      <link name="body">
+        <collision name="solid">
+          <geometry><plane><normal>0 0 1</normal><size>24 24</size></plane></geometry>
+        </collision>
+        <visual name="appearance">
+          <geometry><plane><normal>0 0 1</normal><size>24 24</size></plane></geometry>
+          <material><ambient>0.25 0.3 0.35 1</ambient><diffuse>0.25 0.3 0.35 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Pose order: x y z roll pitch yaw. Metres, then radians.
+         A 1 m cube centred at z=0.5 rests on the ground. -->
+    <model name="orange_cube">
+      <static>true</static>
+      <pose>3 0 0.5 0 0 0</pose>
+      <link name="body">
+        <collision name="solid"><geometry><box><size>1 1 1</size></box></geometry></collision>
+        <visual name="appearance">
+          <geometry><box><size>1 1 1</size></box></geometry>
+          <material><ambient>1 0.35 0.08 1</ambient><diffuse>1 0.35 0.08 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="teal_column">
+      <static>true</static>
+      <pose>0 3 0.75 0 0 0</pose>
+      <link name="body">
+        <collision name="solid"><geometry><cylinder><radius>0.4</radius><length>1.5</length></cylinder></geometry></collision>
+        <visual name="appearance">
+          <geometry><cylinder><radius>0.4</radius><length>1.5</length></cylinder></geometry>
+          <material><ambient>0.05 0.8 0.7 1</ambient><diffuse>0.05 0.8 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The ramp is a box tilted about the y axis. -->
+    <model name="ramp">
+      <static>true</static>
+      <pose>-3 0 0.55 0 0.3 0</pose>
+      <link name="body">
+        <collision name="solid"><geometry><box><size>3 2 0.2</size></box></geometry></collision>
+        <visual name="appearance">
+          <geometry><box><size>3 2 0.2</size></box></geometry>
+          <material><ambient>0.45 0.35 0.8 1</ambient><diffuse>0.45 0.35 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Surprise: this body is dynamic. Press Play to see it fall.
+         Solid sphere: Ixx=Iyy=Izz=2*m*r^2/5=0.025 kg m^2. -->
+    <model name="gold_ball">
+      <static>false</static>
+      <pose>-3 0 3 0 0 0</pose>
+      <link name="body">
+        <inertial>
+          <mass>1</mass>
+          <inertia><ixx>0.025</ixx><iyy>0.025</iyy><izz>0.025</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <collision name="solid"><geometry><sphere><radius>0.25</radius></sphere></geometry></collision>
+        <visual name="appearance">
+          <geometry><sphere><radius>0.25</radius></sphere></geometry>
+          <material><ambient>1 0.75 0.1 1</ambient><diffuse>1 0.75 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
