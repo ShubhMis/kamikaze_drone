@@ -231,15 +231,15 @@ def draw_hud(frame, observation, info, metrics, attitude, sim_time, arrivals,
     if data and now-control_wall < stale_s:
         if data.get('publishing_setpoint'):
             row(12,f'Yaw rate: {math.degrees(data["yaw_rate_rps"]):+.2f} deg/s',GREEN)
-            climb = -data['velocity_ned_mps'][2]
-            row(13,f'Climb speed: {climb:+.3f} m/s (+up)',GREEN)
+            north, east, down = data['velocity_ned_mps']
+            row(13,f'Velocity N/E/D: {north:+.2f} {east:+.2f} {down:+.2f} m/s',GREEN)
         else:
             row(12,'External commands PAUSED',ORANGE)
             row(13,'PX4 owns the current flight manoeuvre',GREY)
         row(15,data.get('state','unknown')[:48],GREEN if data.get('enabled') else GREY)
     else:
         row(12,'Controller output: waiting / stale',ORANGE)
-    row(14,'Pitch command: NONE (vertical-speed control)',GREY)
+    row(14,'PX4 derives attitude from the 3-D velocity setpoint',GREY)
     row(16,'Live telemetry is not exposure-time aligned',GREY)
     # Count arrivals, not UI redraws: repeating a frame is not additional FPS.
     fps = ((len(arrivals)-1)/(arrivals[-1]-arrivals[0])

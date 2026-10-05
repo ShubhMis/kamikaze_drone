@@ -1,0 +1,24 @@
+ PAPER_COMPARISON_AND_PLAN.md                                     |  28 [32m++[m[31m--[m
+ TWO_STAGE_CONTROLLER                                             | 629 [31m-----------------------------------------------------------------------------------[m
+ drone_ws/src/drone_follow/ARCHITECTURE.md                        | 796 [32m+++++++++++++++++[m[31m----------------------------------------------------------------------------------------[m
+ drone_ws/src/drone_follow/EXPERIMENT_LOG.md                      |  13 [32m++[m
+ drone_ws/src/drone_follow/PAPER_CONTROLLER_CONTRACT.md           | 322 [32m+++++++++++++++++++++++++++++++++++++++++++[m
+ drone_ws/src/drone_follow/README.md                              | 416 [32m+++++++++++++++++[m[31m--------------------------------------[m
+ drone_ws/src/drone_follow/UPDATED_APPROACH_FILES.md              | 612 [31m--------------------------------------------------------------------------------[m
+ drone_ws/src/drone_follow/config/follow.yaml                     |  37 [32m++[m[31m---[m
+ drone_ws/src/drone_follow/drone_follow/configuration.py          | 109 [32m+++++++++++++++[m
+ drone_ws/src/drone_follow/drone_follow/experiment.py             |  29 [32m++[m[31m--[m
+ drone_ws/src/drone_follow/drone_follow/follower.py               | 138 [32m++++++++[m[31m-----------[m
+ drone_ws/src/drone_follow/drone_follow/monocular.py              |  22 [31m---[m
+ drone_ws/src/drone_follow/drone_follow/viewer.py                 |   6 [32m+[m[31m-[m
+ drone_ws/src/drone_follow/models/detector/drone_yolov5s_416.onnx | Bin [31m0[m -> [32m28268302[m bytes
+ drone_ws/src/drone_follow/package.xml                            |   3 [32m+[m[31m-[m
+ drone_ws/src/drone_follow/scripts/baseline.py                    |  11 [32m+[m[31m-[m
+ drone_ws/src/drone_follow/setup.py                               |   5 [32m+[m[31m-[m
+ drone_ws/src/drone_follow/test/data/bird_negative.png            | Bin [31m0[m -> [32m1685[m bytes
+ drone_ws/src/drone_follow/test/data/drone_replay.jpg             | Bin [31m0[m -> [32m257393[m bytes
+ drone_ws/src/drone_follow/test/test_configuration.py             |  71 [32m++++++++++[m
+ drone_ws/src/drone_follow/test/test_follower.py                  |  56 [32m++++++++[m
+ drone_ws/src/drone_follow/test/test_monocular.py                 |  31 [31m-----[m
+ drone_ws/src/drone_follow/test/test_session.py                   |  46 [32m++++++[m[31m-[m
+ 23 files changed, 985 insertions(+), 2395 deletions(-)

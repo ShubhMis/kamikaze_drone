@@ -59,7 +59,8 @@ class Experiment(Node):
         fields = ['wall_s','sim_s','stage','image_stamp_s','image_age_s','visible','reason',
                   'u_px','v_px','error_u_px','error_v_px','x_normalized','y_normalized',
                   'control_stamp_s','control_measurement_stamp_s','control_measurement_age_s',
-                  'publishing_setpoint','command_down_mps','command_yaw_rps',
+                  'publishing_setpoint','command_north_mps','command_east_mps',
+                  'command_down_mps','command_yaw_rps',
                   'follower_north_m','follower_east_m','follower_down_m',
                   'target_north_m','target_east_m','target_down_m','state']
         self.writer = csv.DictWriter(self.csvfile, fieldnames=fields) if self.csvfile else None
@@ -72,7 +73,7 @@ class Experiment(Node):
         self.create_subscription(CameraInfo, '/follow_camera/camera_info', self.camera_info, SENSOR)
         for i in (1,2):
             self.create_subscription(OffboardControlMode, f'/px4_{i}/fmu/in/offboard_control_mode',
-                                     lambda m, i=i: self.touch(f'mode{i}'), 10)
+                                     lambda m, i=i: self.touch(f'offboard_sp{i}'), 10)
             self.create_subscription(VehicleOdometry, f'/px4_{i}/fmu/out/vehicle_odometry',
                                      lambda m, i=i: self.vehicle_odom(i,m), SENSOR)
             self.create_subscription(VehicleStatus, f'/px4_{i}/fmu/out/vehicle_status',
@@ -157,6 +158,7 @@ class Experiment(Node):
             return
         pos = self.odom[1].position if 1 in self.odom else [None]*3
         target_pos = self.odom[2].position if 2 in self.odom else [None]*3
+        velocity_command = self.metrics.get('velocity_ned_mps', [0, 0, 0])
         out = dict(wall_s=time.monotonic()-self.started,sim_s=self.sim_time,stage=self.stage,
                    image_stamp_s=data['stamp_s'],image_age_s=data['image_age_s'],
                    visible=data['visible'],reason=data['reason'],
@@ -164,7 +166,9 @@ class Experiment(Node):
                    control_measurement_stamp_s=self.metrics.get('measurement_stamp_s'),
                    control_measurement_age_s=self.metrics.get('measurement_age_s'),
                    publishing_setpoint=self.metrics.get('publishing_setpoint'),
-                   command_down_mps=self.metrics.get('velocity_ned_mps',[0,0,0])[2],
+                   command_north_mps=velocity_command[0],
+                   command_east_mps=velocity_command[1],
+                   command_down_mps=velocity_command[2],
                    command_yaw_rps=self.metrics.get('yaw_rate_rps'),
                    follower_north_m=pos[0],follower_east_m=pos[1],follower_down_m=pos[2],
                    target_north_m=target_pos[0],target_east_m=target_pos[1],target_down_m=target_pos[2],
@@ -192,6 +196,7 @@ class Experiment(Node):
         dt = np.diff(self.stamps)
         valid = dt[dt > 0]
         result = dict(status=status or ('passed' if passed else 'failed'),reason=reason,scenario=self.c['scenario'],
+                      controller=self.metrics.get('controller', 'png_ibvs_velocity'),
                       stage=self.stage,wall_seconds=time.monotonic()-self.started,
                       images=self.count,visible_images=self.visible,
                       valid_images=self.valid_images,
@@ -201,8 +206,8 @@ class Experiment(Node):
                       timing_window_images=len(self.stamps),
                       nonincreasing_image_stamps=self.nonincreasing_stamps,
                       altitude_extrema_ned_m={str(i):v for i,v in self.altitudes.items()},
-                      sensing='monocular bearing only; no metric range; no forward approach')
-        for stage in ('RECORDING','CENTRING'):
+                      sensing='monocular bearing; no metric range; single PNG-IBVS velocity-interface reconstruction')
+        for stage in ('RECORDING','INTERCEPTING'):
             stats = self.errors.get(stage)
             if stats:
                 result[stage.lower()+'_pixel_error'] = dict(samples=stats['samples'],
@@ -254,7 +259,7 @@ class Experiment(Node):
         if missing:
             self.finish(False,'Stale required stream(s): '+', '.join(missing))
             return
-        if self.stage not in ('RECORDING','CENTRING') and now-self.stage_start > self.c['flight_timeout_s']:
+        if self.stage not in ('RECORDING','INTERCEPTING') and now-self.stage_start > self.c['flight_timeout_s']:
             self.finish(False,'Flight-stage timeout: '+self.stage)
             return
         if self.stage == 'PREFLIGHT':
@@ -272,7 +277,7 @@ class Experiment(Node):
                          and np.linalg.norm(self.odom[i].velocity) < .35
                          and self.status[i].nav_state in (VehicleStatus.NAVIGATION_STATE_AUTO_LOITER,
                                                          VehicleStatus.NAVIGATION_STATE_POSCTL)
-                         and now-self.last.get(f'mode{i}',0) < .25 for i in (1,2))
+                         and now-self.last.get(f'offboard_sp{i}',0) < .25 for i in (1,2))
             self.hold_since = (self.hold_since or now) if stable else None
             if self.hold_since and now-self.hold_since > 2:
                 for i in (1,2):
@@ -290,14 +295,14 @@ class Experiment(Node):
                 response=self.future.result()
                 if not response.success:
                     raise RuntimeError(response.message)
-                self.transition('CENTRING')
-        elif self.stage in ('RECORDING','CENTRING'):
+                self.transition('INTERCEPTING')
+        elif self.stage in ('RECORDING','INTERCEPTING'):
             if self.c['scenario'] != 'observe':
                 if not all(self.status[i].arming_state == VehicleStatus.ARMING_STATE_ARMED and
                            self.status[i].nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD for i in (1,2)):
                     raise RuntimeError('Vehicle left armed Offboard during recording')
-                if self.stage == 'CENTRING' and not self.metrics.get('enabled'):
-                    raise RuntimeError('Centring disabled (e.g. detection loss); no automatic reacquisition')
+                if self.stage == 'INTERCEPTING' and not self.metrics.get('enabled'):
+                    raise RuntimeError('Pursuit disabled (e.g. detection loss); no automatic reacquisition')
             if self.c['duration_s'] and now-self.stage_start >= self.c['duration_s']:
                 if self.c['scenario'] == 'observe':
                     self.finish(True,'Sensor/communication baseline completed; no flight commanded')
@@ -307,7 +312,7 @@ class Experiment(Node):
                         self.command(i,'commander','land')
                     self.transition('LANDING')
                 else:
-                    self.finish(True,'Requested interval completed; centring stopped, no landing requested')
+                    self.finish(True,'Requested interval completed; pursuit stopped, no landing requested')
         elif self.stage == 'LANDING':
             if all(self.status[i].arming_state != VehicleStatus.ARMING_STATE_ARMED for i in (1,2)):
                 self.finish(True,'Bounded '+self.c['scenario']+' experiment completed and both vehicles disarmed')

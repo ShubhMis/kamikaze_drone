@@ -1,5 +1,18 @@
 # First-session experiment and change log
 
+## Current source status — 5 October 2026
+
+The active branch now has one PNG-IBVS velocity-interface controller. The
+centre/intercept parameter selector, centring fallback module, `centre` scenario
+and two-stage design note were removed. The active scenario is `intercept`, and
+the experiment stage is `INTERCEPTING`. Disable, target loss, PX4 health failure,
+estimator reset and clock discontinuity clear the complete guidance state.
+
+No detector or DKF change was made in this refactor. No simulation run is claimed
+for these source changes; the entries below remain historical evidence for the
+source snapshots saved with those runs. See `PAPER_CONTROLLER_CONTRACT.md` for
+the current equation-level implementation and gap register.
+
 This is the evidence record for 25–26 September 2026. The user asked on
 26 September for **no further assistant-run experiments**. No simulation was
 started after that request; final work was documentation and static inspection.

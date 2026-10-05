@@ -24,10 +24,10 @@ class SessionTests(unittest.TestCase):
         n.run = Path(self.directory.name)
         config = Path(__file__).resolve().parents[1]/'config/follow.yaml'
         n.c = yaml.safe_load(config.read_text())['baseline']
-        n.c['scenario'] = 'centre'
+        n.c['scenario'] = 'intercept'
         n.record = False
         n.started = n.stage_start = time.monotonic()-100
-        n.stage = 'CENTRING'
+        n.stage = 'INTERCEPTING'
         n.sim_time = 10.
         n.done = n.halted = False
         n.exit_code = 1
@@ -58,7 +58,7 @@ class SessionTests(unittest.TestCase):
         self.assertFalse((n.run/'result.json').exists())
 
     @patch('drone_follow.experiment.rclpy.ok', return_value=True)
-    def test_finite_interval_stops_centring_but_keeps_session(self, _):
+    def test_finite_interval_stops_pursuit_but_keeps_session(self, _):
         n = self.node
         n.c['duration_s'] = 1.
         n.advance()
@@ -66,7 +66,10 @@ class SessionTests(unittest.TestCase):
         self.assertFalse(n.done)
         n.command.assert_not_called()
         self.assertFalse(n.enable.call_async.call_args.args[0].data)
-        self.assertEqual(json.loads((n.run/'result.json').read_text())['status'], 'passed')
+        result = json.loads((n.run/'result.json').read_text())
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(result['controller'], 'png_ibvs_velocity')
+        self.assertIn('single PNG-IBVS', result['sensing'])
 
     @patch('drone_follow.experiment.rclpy.ok', return_value=True)
     def test_stale_camera_reports_failure_without_exit_or_land(self, _):
@@ -115,10 +118,41 @@ class SessionTests(unittest.TestCase):
                 error_u_px=3., error_v_px=4.))))
         self.assertEqual(len(n.stamps), 6000)
         self.assertEqual(n.count, 6100)
-        self.assertEqual(n.errors['CENTRING']['samples'], 6100)
-        self.assertEqual(n.errors['CENTRING']['squared_sum'], 6100*25.)
+        self.assertEqual(n.errors['INTERCEPTING']['samples'], 6100)
+        self.assertEqual(n.errors['INTERCEPTING']['squared_sum'], 6100*25.)
         self.assertEqual(n.events.getvalue(), '')
         self.assertFalse((n.run/'measurements.csv').exists())
+
+    def test_recorded_row_contains_complete_velocity_command(self):
+        n = self.node
+        n.writer = Mock()
+        n.csvfile = object()
+        n.odom = {}
+        n.metrics = dict(
+            stamp_s=2.0,
+            measurement_stamp_s=1.95,
+            measurement_age_s=0.05,
+            publishing_setpoint=True,
+            velocity_ned_mps=[1.25, -0.5, 0.2],
+            yaw_rate_rps=0.1,
+            state='INTERCEPTING',
+        )
+        n.image_observation(SimpleNamespace(data=json.dumps(dict(
+            stamp_s=2.0,
+            image_age_s=0.01,
+            visible=True,
+            reason='detected',
+            u_px=320.0,
+            v_px=240.0,
+            error_u_px=0.0,
+            error_v_px=0.0,
+            x_normalized=0.0,
+            y_normalized=0.0,
+        ))))
+        row = n.writer.writerow.call_args.args[0]
+        self.assertEqual(row['command_north_mps'], 1.25)
+        self.assertEqual(row['command_east_mps'], -0.5)
+        self.assertEqual(row['command_down_mps'], 0.2)
 
     @patch('drone_follow.experiment.rclpy.ok', return_value=False)
     def test_manual_stop_saves_interrupted_summary(self, _):

@@ -6,9 +6,9 @@ baseline:
   ready_timeout_s: 90.0
   stale_timeout_s: 3.0
   takeoff_altitude_m: 3.0
-  follower_yaw_deg: 12.0  # initial scene heading offset; try 10.0 for centring
+  follower_yaw_deg: 12.0  # initial scene heading offset for pursuit evaluation
   flight_timeout_s: 90.0
-  scenario: observe  # observe, hover, centre; no forward approach or range estimate
+  scenario: observe  # observe, hover, intercept
   duration_s: 0.0    # 0 = continue until you press Ctrl+C
   auto_land: false  # no scheduled landing; PX4's own failsafes remain active
   keep_open: true   # report completion/failure without shutting down the simulation
@@ -29,28 +29,21 @@ follower:
   ros__parameters:
     use_sim_time: true
     px4_namespace: /px4_1
-    # ── Mode ────────────────────────────────────────────────────────────────
-    # 'centre'    → original yaw+vertical centring only (zero forward velocity)
-    # 'intercept' → PNG-IBVS from arXiv:2409.17497v2 (full 3D NED velocity)
-    mode: "intercept"
-    # ── Centre mode parameters ───────────────────────────────────────────────
-    yaw_gain: 0.8              # rad/s per rad of horizontal bearing error
-    vertical_gain: 0.6         # m/s per normalized vertical error, level hover
-    max_yaw_rate: 0.3          # rad/s
-    max_vertical_speed: 0.4    # m/s; horizontal velocity is always zero
-    # ── Shared detection gating ──────────────────────────────────────────────
+    # The active package has one controller; there is no mode selector.
     max_measurement_age_s: 0.3
     minimum_detections: 6
-    # ── Intercept mode parameters (arXiv:2409.17497v2, Yan et al. 2025) ─────
-    approach_speed: 3.0            # v_d  — desired closing speed (m/s)
-    png_gain_y: 3.0                # K_y  — PNG gain, vertical plane   (paper: 3)
-    png_gain_z: 3.0                # K_z  — PNG gain, horizontal plane (paper: 3)
-    fov_kp: 0.03                   # yaw PD proportional gain          (paper: 0.03)
-    fov_kd: 0.01                   # yaw PD derivative gain            (paper: 0.01)
-    fov_ka: 2.0                    # vertical FOV correction gain      (paper: 2)
-    max_speed: 4.0                 # hard 3D velocity magnitude limit (m/s)
-    max_vertical_speed_intercept: 2.0  # NED-down hard clamp (m/s)
-    camera_mount_q: [1.0, 0.0, 0.0, 0.0]  # identity = camera aligned with body FRD
+    # Current velocity-interface reconstruction. PAPER_CONTROLLER_CONTRACT.md
+    # records which terms match the paper and which remain to be implemented.
+    approach_speed: 3.0
+    png_gain_y: 3.0
+    png_gain_z: 3.0
+    fov_kp: 0.03
+    fov_kd: 0.01
+    fov_ka: 2.0
+    max_speed: 4.0
+    max_yaw_rate: 0.3
+    max_vertical_speed: 2.0
+    camera_mount_q: [1.0, 0.0, 0.0, 0.0]
 leader:
   ros__parameters:
     use_sim_time: true

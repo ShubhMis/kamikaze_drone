@@ -22,6 +22,7 @@ import yaml
 
 PACKAGE = Path(__file__).resolve().parents[1]
 REPO = PACKAGE.parents[2]
+SCENARIOS = ('observe', 'hover', 'intercept')
 
 
 def preflight(config):
@@ -41,10 +42,12 @@ def preflight(config):
     from px4_msgs.msg import VehicleOdometry
     from std_srvs.srv import SetBool
     from drone_follow import detector, follower
+    from drone_follow.configuration import validate_controller_parameters
     from ament_index_python.packages import get_package_prefix
     get_package_prefix('ros_gz_bridge')
-    if c['scenario'] not in ('observe', 'hover', 'centre'):
-        raise RuntimeError('scenario must be observe, hover or centre')
+    validate_controller_parameters(config.get('follower', {}).get('ros__parameters'))
+    if c['scenario'] not in SCENARIOS:
+        raise RuntimeError('scenario must be observe, hover or intercept')
     for key in ('record', 'auto_land', 'keep_open'):
         if not isinstance(c[key], bool):
             raise RuntimeError(f'{key} must be a YAML boolean (true or false)')
@@ -129,7 +132,7 @@ def main():
                            help='save detailed measurements, images, source and PX4 flight logs')
     recording.add_argument('--no-record', dest='record', action='store_false')
     parser.add_argument('--check', action='store_true', help='preflight only')
-    parser.add_argument('--scenario', choices=['observe', 'hover', 'centre'])
+    parser.add_argument('--scenario', choices=SCENARIOS)
     parser.add_argument('--duration', type=float, help='wall seconds after ready; 0 until Ctrl+C')
     args = parser.parse_args()
     run = None
@@ -170,7 +173,7 @@ def main():
                    ROS_DOMAIN_ID=str(c['ros_domain_id']),
                    GZ_PARTITION='drone_baseline_'+stamp,
                    BASELINE_DEBUG='1' if args.debug else '0')
-        print(f'RUN {run}\nMODE {c["scenario"]}; ROS domain {c["ros_domain_id"]}; monocular, no range', flush=True)
+        print(f'RUN {run}\nSCENARIO {c["scenario"]}; ROS domain {c["ros_domain_id"]}; monocular bearing, no range', flush=True)
         print(f'Recording: {"detailed" if c["record"] else "minimal"}; '
               f'scheduled landing: {c["auto_land"]}; keep simulation open: {c["keep_open"]}. '
               'Ctrl+C stops this stack.', flush=True)

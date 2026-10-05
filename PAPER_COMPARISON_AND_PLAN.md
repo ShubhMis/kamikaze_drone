@@ -1,8 +1,8 @@
 # Simulation comparison and implementation plan
 
-Reviewed 29 September 2026. Scope: compare the current executable project with arXiv:2409.17497v2; defer the choice of assistance, inspection, docking, or mission handover behavior. This review changes no simulation or controller code.
+Reviewed 29 September 2026; active implementation status updated 5 October 2026. Scope: compare the executable project with arXiv:2409.17497v2 and keep delayed estimation and learned detection out of the current controller refactor.
 
-The project is a useful PX4/ROS 2/Gazebo visual-control foundation. The current `intercept` mode is an unvalidated velocity-interface adaptation of some paper concepts, not a faithful implementation of the complete paper. Retain the infrastructure; resolve the controller, timing, experiment, and attribution gaps before claiming reproduction.
+The project is a useful PX4/ROS 2/Gazebo visual-control foundation. The active package now has one PNG-IBVS velocity-interface controller and no centre/intercept selector. It remains an unvalidated adaptation of some paper concepts, not a faithful implementation of the complete paper. `drone_ws/src/drone_follow/PAPER_CONTROLLER_CONTRACT.md` is authoritative for equation-level implementation status.
 
 ## 1. Reference and interpretation
 
@@ -22,7 +22,7 @@ The paper's reported 0.089 m CEP comes from 50 static-target simulation trials (
 
 ## 2. What your current code actually implements
 
-The authoritative implementation is `drone_ws/src/drone_follow/drone_follow/`, its launch files, and `config/follow.yaml`. `UPDATED_APPROACH_FILES.md` contains an older code dump with different measurement semantics; it is not the active controller.
+The authoritative implementation is `drone_ws/src/drone_follow/drone_follow/`, its launch files, and `config/follow.yaml`. The obsolete alternate-controller code dump and two-stage design note have been removed from the active tree; Git history retains them.
 
 | Component | Current implementation | Assessment against the paper |
 |---|---|---|
@@ -41,9 +41,9 @@ The authoritative implementation is `drone_ws/src/drone_follow/drone_follow/`, i
 
 The existing separation of detector, follower adapter, pure controller math, leader, viewer, and experiment sequencer is worth preserving. Freshness checks, odometry reset checks, armed-Offboard gating, and suspension of external setpoints during autopilot takeoff/landing are useful existing features.
 
-## 3. Findings that need attention first
+## 3. Current findings
 
-1. **Scenario and controller mode disagree.** [follow.yaml:35](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/config/follow.yaml:35) selects `intercept`, while [experiment.py:283](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/drone_follow/experiment.py:283) treats `centre` as a request to enable whichever controller is configured. Thus the documented `--scenario centre` command can produce horizontal approach. Default `observe` does not arm or enable this behavior. Make the requested and actual mode explicit and reject incompatible combinations.
+1. **Controller-selection ambiguity is resolved.** `follow.yaml` contains no controller `mode`; the flight scenario is named `intercept`; enabling always creates fresh PNG state; no centring fallback exists. `observe` still does not arm, and `hover` does not enable visual pursuit.
 
 2. **The control interface is different.** [follower.py:262](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/drone_follow/follower.py:262) publishes velocity-mode `OffboardControlMode` and `TrajectorySetpoint`. A `yawspeed` field alongside velocity is not the paper's body angular-rate vector. This is a legitimate baseline if labeled as an adaptation; it is not Eq. (23).
 
@@ -55,13 +55,13 @@ The existing separation of detector, follower adapter, pure controller math, lea
 
 6. **Guidance state is not established as equivalent.** [png_ibvs.py:245](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/drone_follow/png_ibvs.py:245) accumulates previous desired angles. Eq. (9) uses the previous velocity angle, whose definition in Eq. (8) comes from vehicle velocity. Desired and measured direction differ when the vehicle lags or saturates. Document any approximation and test it before claiming equivalence.
 
-7. **The experiment can report misleading results.** [experiment.py:204](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/drone_follow/experiment.py:204) hardcodes “no forward approach” even for the current mode. The [CSV fields](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/drone_follow/experiment.py:59) omit north/east velocity commands. A [completed interval](/home/crl/Desktop/Shubh/kamikaze/drone_ws/src/drone_follow/drone_follow/experiment.py:310) can be labeled passed without a tracking-convergence requirement.
+7. **Experiment labeling is corrected, while success semantics remain limited.** Results identify the single PNG-IBVS velocity reconstruction and record north/east/down commands. A completed interval still proves process completion rather than paper-level tracking or interception performance.
 
 8. **Bearing-only sensing is not itself a paper mismatch.** The paper deliberately uses target angles. Adding target position telemetry or depth to the guidance loop would change its sensing assumptions. For future assistance, an independently justified relative range/pose estimate will be needed to certify distance, but that design decision is deferred here. Simulator truth can be used for evaluation without feeding it into control.
 
 ## 4. Evidence from your saved experiments
 
-Thirteen runs on 28 September use `follower.mode: intercept`: eleven failed during `CENTRING`, two were interrupted in `WAITING` or `TAKEOFF`, and none passed. The eleven failures report that centering was disabled, for example due to detection loss, with no automatic reacquisition.
+Thirteen historical runs on 28 September used `follower.mode: intercept`: eleven failed while the old sequencer called the active phase `CENTRING`, two were interrupted in `WAITING` or `TAKEOFF`, and none passed. These labels describe the historical source snapshot, not the current single-controller configuration.
 
 The package manifest hashes for the first failed run, `20260928_115415_747624`, and latest failed run, `20260928_164927_477079`, match the current package source files. These failures therefore apply to the current source at launch; they are not merely failures of an unrelated older implementation.
 
@@ -69,19 +69,19 @@ The [latest result](/home/crl/Desktop/Shubh/kamikaze/runs/20260928_164927_477079
 
 The high whole-session visibility fraction includes periods outside active following and does not prove stable closed-loop tracking. All thirteen runs used minimal recording, so full histories are unavailable. The result cannot establish whether the underlying event was a FOV exit, perception ambiguity, collision, or another cause. Do not infer the physical cause from the generic failure string.
 
-All 36 existing isolated tests passed in the sourced ROS/workspace environment. These tests do not launch Gazebo or prove closed-loop tracking, DKF performance, or paper equivalence. Several math tests check the current formulas against their own expected outputs; an incorrect paper interpretation can still pass them.
+The pre-refactor audit reported 36 isolated tests. The current suite is rerun and reported with the source change that produced it; test counts are not treated as flight evidence. These tests do not launch Gazebo or prove closed-loop tracking, DKF performance, or paper equivalence. Several math tests check the current formulas against their own expected outputs; an incorrect paper interpretation can still pass them.
 
 ## 5. Implementation sequence
 
 The deliverables and acceptance gates below are proposed engineering criteria, not requirements or results quoted from the paper. Keep each stage reviewable and preserve earlier baselines.
 
-### Stage 1: Make the baseline unambiguous and reproducible
+### Stage 1: Make the baseline unambiguous and reproducible — completed for controller selection
 
-Change `config/follow.yaml`, `scripts/baseline.py`, `experiment.py`, README, and architecture documentation together. Separate scenario sequencing from explicit controller selection. Validate allowed combinations and numerical parameters before arming. Prohibit runtime controller-mode changes while enabled, or define an explicit disable/reset/re-enable transition that initializes the correct state. Record the effective controller, sensing mode, parameters, source hashes, PX4 version, simulator version, and termination reason in every result. Keep the existing centering controller as a named reference baseline.
+The active package uses one controller, one `intercept` scenario name, and explicit disable/reset/re-enable behavior. The former centring module and test are retained only in Git history. Effective configuration, source hashes, PX4 version, simulator version and termination reason continue to be saved with recorded runs.
 
 Add complete north/east/down velocity commands, yaw requests, measured velocity/attitude, controller state, image exposure time, arrival time, used-state time, and dropped-frame reasons to recording. Keep wall-time process supervision separate from simulation-time dynamics. Split “session completed” from “control objective achieved.” Make research recordings immutable snapshots rather than relying on a live source symlink.
 
-Acceptance: a centering-only configuration cannot select the 3D controller; a rejected configuration fails before flight; a recorded run can be reconstructed and plotted without reading the current source tree.
+Acceptance status: there is no controller-selection combination to mismatch; `centre` is rejected by the launcher; `intercept` is the only visual-flight scenario. A fresh recorded SITL run is still required to validate the refactored runtime end to end.
 
 ### Stage 2: Establish the mathematical contract before editing control laws
 
@@ -139,7 +139,7 @@ Acceptance: a written task specification defines what “help” means, what mal
 
 | Metric | Purpose |
 |---|---|
-| Actual mode and phase | Prevent centering runs and 3D-control runs being mixed. |
+| Controller identity and lifecycle phase | Confirm the fixed controller and distinguish disabled, active and failed intervals. |
 | Horizontal error RMS/percentiles | Quantify horizontal centering in pixels and normalized coordinates. |
 | Vertical excursion and FOV margin | Evaluate the paper's stated visibility objective; do not demand vertical zero error by default. |
 | Per-active-phase visibility and longest dropout | Avoid preflight observations inflating tracking performance. |
@@ -152,8 +152,8 @@ Acceptance: a written task specification defines what “help” means, what mal
 
 ## 7. What can currently be claimed
 
-Supported: two-vehicle PX4 SITL infrastructure, monocular red-marker bearing extraction, a centering baseline, a partial PNG-inspired velocity controller, and passing isolated tests.
+Supported: two-vehicle PX4 SITL infrastructure, monocular red-marker bearing extraction, one active PNG-inspired velocity controller, explicit lifecycle reset behavior, and isolated tests.
 
 Not supported by current evidence: faithful reproduction of the complete paper; equivalent DKF or FOV behavior; the paper's accuracy/stability claims; successful current 3D closed-loop tracking; autonomous inspection, assistance, repair, or mission replacement.
 
-The next implementation task should be Stage 1, followed by the geometry and timing audit. Increasing speed, copying gains, changing detector families, or moving simulators before those foundations are measurable would not establish paper equivalence.
+The next implementation task is the controller-math gap in the contract: measured velocity angles and Eq. (9), pixel/normalized FOV units, the Eq. (14) speed interpretation, and eventually Eqs. (17)-(23). Detector replacement and DKF are deliberately deferred until that algorithm path is coherent and replay-tested.
