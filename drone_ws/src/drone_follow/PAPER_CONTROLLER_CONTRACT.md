@@ -151,7 +151,7 @@ There is no controller-mode parameter, centring fallback, dwell timer, hysteresi
 | `bx = ray.x/ray.z`, `by = ray.y/ray.z` | `follower.py` | Dimensionless normalized image coordinates | Recovered from the latest accepted bearing | `intercept_command()` |
 | `error_u_px`, `error_v_px` | `detector.py` diagnostics | Image pixels relative to `CameraInfo` principal point | Original image timestamp | Experiment/viewer only; the active controller does not consume them |
 | aligned own attitude | PX4 `VehicleOdometry.q` history | Hamilton quaternion; body FRD to local NED | Quaternion SLERP at the accepted image timestamp; bounded latest-sample hold only for minor callback skew | `rotation()` |
-| aligned own velocity | PX4 `VehicleOdometry.velocity` history | NED m/s | Linear interpolation at the accepted image timestamp; same bounded hold policy | Current custom vertical correction only |
+| aligned own velocity | PX4 `VehicleOdometry.velocity` history | NED m/s | Linear interpolation at the accepted image timestamp; same bounded hold policy | Current-speed magnitude used by the Eq. (14) reconstruction |
 | `camera_mount_q` | `follow.yaml` | Camera FRD to body FRD quaternion | Static run parameter | `bearing_to_ned()` |
 | `vel_ned` | `intercept_command()` | NED m/s | Follower timer, currently 20 Hz | PX4 `TrajectorySetpoint.velocity` |
 | `yaw_rate` | `intercept_command()` | rad/s, PX4 NED yaw-rate convention | Follower timer, currently 20 Hz | PX4 `TrajectorySetpoint.yawspeed` |
@@ -196,12 +196,12 @@ engineering policy, not a behavior specified by the paper.
 | (7) | `los_angles()` uses `atan2` in NED | Implemented with explicit NED convention |
 | (8) | No measured-velocity-direction calculation | Missing, including zero-speed handling |
 | (9) | `png_update()` accumulates the previous desired angles | Mismatch: the paper anchors the update to the previous measured velocity angles |
-| (10) | `intercept_command()` builds a direction and multiplies it by `approach_speed` | Partial; speed is a fixed run parameter |
+| (10) | `intercept_command()` builds a direction and multiplies it by the bounded desired-speed magnitude | Partial; direction is implemented, while the downstream paper controller remains absent |
 | (11) | Horizontal FOV feedback exists | Partial; the stated vertical-excursion objective is not implemented |
 | (12) | No image interaction equation | Missing |
 | (13) | `fov_yaw_rate()` applies PD feedback | Partial: it uses normalized `bx`, while the paper's gain/error convention is unresolved |
-| (14) | Fixed `approach_speed` is substituted | Mismatch; the printed speed law is not implemented |
-| (15)-(16) | `fov_vertical_correction()` adds a custom downward velocity term | Mismatch; this term must not be attributed to these equations |
+| (14) | `desired_speed = clip(||vnow|| + speed_increment_mps, 0, max_speed)` | Partial: literal bounded software reconstruction; `ka` is explicitly interpreted as an m/s increment because the paper's unit/time contract is ambiguous |
+| (15)-(16) | No vertical-excursion controller | Missing; the former unsupported downward velocity bias has been removed |
 | (17)-(23) | PX4 velocity/yaw-rate interface substitutes for desired acceleration, lift direction, attitude, body rates and physical lift | Missing from the current controller |
 
 Consequently, the active module is named and reported as a **single PNG-IBVS velocity-interface reconstruction**. It must not be described as a complete reproduction of Eqs. (3)-(23).
@@ -226,8 +226,7 @@ timestamp and reuses the last command between observations.
 | `png_gain_y`, `png_gain_z` | dimensionless | LOS-angle increment gain | Related to Eq. (9), but current state anchor differs |
 | `fov_kp` | rad/s per normalized-error unit | Yaw proportional term | Error-unit convention differs from the printed pixel definition |
 | `fov_kd` | rad per normalized-error unit | Yaw derivative term | Same convention issue |
-| `approach_speed` | m/s | Immediate desired speed magnitude | Current adaptation; not Eq. (14) |
-| `fov_ka` | implementation-specific | Custom vertical velocity-bias rate | Current adaptation; unsupported by Eqs. (15)-(16) |
+| `speed_increment_mps` | m/s | Increment in `clip(||vnow|| + speed_increment_mps, 0, max_speed)` | Explicit software interpretation of `ka` in Eq. (14); author-intended units remain open |
 | `max_speed` | m/s | Velocity magnitude saturation | Engineering bound |
 | `max_vertical_speed` | m/s | NED-down component saturation | Engineering bound |
 | `max_yaw_rate` | rad/s | Yaw-rate saturation | Engineering/PX4 bound |
@@ -250,7 +249,12 @@ Bibliographic entry, p. 10: K. Yang, C. Bai, Z. She, and Q. Quan, *High-speed in
 
 **ANALYSIS:** these appearances do not establish one unambiguous physical unit for `ka` under ordinary dimensional reading. The role of elapsed time is not explicit in Eq. (14).
 
-**OPEN:** author-intended units and time interpretation. This document does not choose or supply a corrected expression.
+**IMPLEMENTED SOFTWARE POLICY:** `ka` is represented by
+`speed_increment_mps` and used in the bounded expression
+`clip(||vnow|| + speed_increment_mps, 0, max_speed)`. This is the closest
+literal reconstruction used by this project; it is not a claim that the paper
+specified m/s units. Author-intended units and time interpretation remain
+OPEN.
 
 ### Q3. Equation (23): physical dimensions
 

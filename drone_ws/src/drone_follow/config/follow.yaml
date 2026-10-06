@@ -5,10 +5,10 @@ baseline:
   agent_port: 8888
   ready_timeout_s: 90.0
   stale_timeout_s: 3.0
-  takeoff_altitude_m: 8.0
+  takeoff_altitude_m: 4.0
   # Target begins the airborne scenario this much higher than the follower.
   # PX4 takeoff altitude is relative to each vehicle's home; 3.0 + 3.0 = 6.0 m.
-  target_takeoff_altitude_offset_m: -4.0
+  target_takeoff_altitude_offset_m: 2.0
   follower_yaw_deg: 12.0  # initial scene heading offset for pursuit evaluation
   flight_timeout_s: 90.0
   scenario: observe  # observe, hover, intercept
@@ -44,14 +44,13 @@ follower:
     state_history_s: 2.0
     max_state_extrapolation_s: 0.03
     max_odometry_sample_age_s: 0.1
-    # Current velocity-interface reconstruction. PAPER_CONTROLLER_CONTRACT.md
-    # records which terms match the paper and which remain to be implemented.
-    approach_speed: 3.0
+    # Literal bounded interpretation of Eq. (14): vd = ||vnow|| + ka.
+    # Here ka is explicitly treated as a speed increment in m/s.
+    speed_increment_mps: 1.0
     png_gain_y: 3.0
     png_gain_z: 3.0
     fov_kp: 0.03
     fov_kd: 0.01
-    fov_ka: 2.0
     max_speed: 4.0
     max_yaw_rate: 0.3
     max_vertical_speed: 2.0

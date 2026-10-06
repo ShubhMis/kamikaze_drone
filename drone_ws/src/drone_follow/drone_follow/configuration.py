@@ -12,13 +12,12 @@ CONTROLLER_KEYS = {
     'max_state_extrapolation_s',
     'max_odometry_sample_age_s',
     'minimum_detections',
-    'approach_speed',
+    'speed_increment_mps',
     'max_yaw_rate',
     'png_gain_y',
     'png_gain_z',
     'fov_kp',
     'fov_kd',
-    'fov_ka',
     'max_speed',
     'max_vertical_speed',
     'camera_mount_q',
@@ -37,6 +36,8 @@ OBSOLETE_CONTROLLER_KEYS = {
     'center_hold_time',
     'recenter_error_threshold',
     'max_vertical_speed_intercept',
+    'approach_speed',
+    'fov_ka',
 }
 
 
@@ -99,14 +100,14 @@ def validate_controller_parameters(parameters):
         raise ValueError('minimum_detections must be an integer from 1 to 100')
 
     positive = (
-        'approach_speed', 'max_yaw_rate', 'png_gain_y', 'png_gain_z',
+        'speed_increment_mps', 'max_yaw_rate', 'png_gain_y', 'png_gain_z',
         'max_speed', 'max_vertical_speed',
     )
     values = {name: _finite_number(parameters, name) for name in positive}
     if any(value <= 0 for value in values.values()):
         raise ValueError(', '.join(positive) + ' must all be positive')
-    if values['approach_speed'] > values['max_speed']:
-        raise ValueError('approach_speed must not exceed max_speed')
+    if values['speed_increment_mps'] > values['max_speed']:
+        raise ValueError('speed_increment_mps must not exceed max_speed')
     if values['max_vertical_speed'] > values['max_speed']:
         raise ValueError('max_vertical_speed must not exceed max_speed')
     if values['max_speed'] > 20 or values['max_yaw_rate'] > 10:
@@ -114,7 +115,7 @@ def validate_controller_parameters(parameters):
     if values['png_gain_y'] > 10 or values['png_gain_z'] > 10:
         raise ValueError('PNG gains must be <=10')
 
-    for name in ('fov_kp', 'fov_kd', 'fov_ka'):
+    for name in ('fov_kp', 'fov_kd'):
         value = _finite_number(parameters, name)
         if not 0 <= value <= 10:
             raise ValueError(f'{name} must be between 0 and 10')

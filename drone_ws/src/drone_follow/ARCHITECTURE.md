@@ -66,7 +66,7 @@ While enabled, there is exactly one calculation path:
 
 ```text
 bearing -> inertial LOS -> LOS angles -> PNG-inspired desired direction
-        -> fixed speed/current vertical adaptation -> NED velocity
+        -> bounded Eq. (14) speed magnitude -> NED velocity
 horizontal image error -> yaw PD ------------------> yaw rate
 ```
 
@@ -139,8 +139,8 @@ The current module contains useful pieces of Eqs. (3), (5)-(7), (9)-(10) and
   measured velocity direction;
 - the yaw loop currently consumes normalized error rather than the paper's
   clearly defined pixel error;
-- fixed `approach_speed` substitutes for the ambiguous Eq. (14);
-- the custom downward velocity correction is not Eqs. (15)-(16);
+- Eq. (14) uses an explicit bounded `vd = ||vnow|| + ka` software policy;
+- the vertical-excursion controller described by Eqs. (15)-(16) is absent;
 - Eqs. (17)-(23) and the body-rate/lift interface are absent.
 
 The exact binding and open questions are maintained in

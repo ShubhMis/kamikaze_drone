@@ -105,8 +105,7 @@ airborne altitude difference.
 | `reacquire_timeout_s` | Maximum time allowed to rebuild a fresh detection streak |
 | `png_gain_y`, `png_gain_z` | Current LOS-angle update gains |
 | `fov_kp`, `fov_kd` | Current horizontal FOV yaw feedback gains |
-| `approach_speed` | Current fixed velocity magnitude; a documented departure from paper Eq. (14) |
-| `fov_ka` | Current custom vertical correction; not attributable to paper Eqs. (15)-(16) |
+| `speed_increment_mps` | Bounded speed increment for the explicit `vd = ||vnow|| + ka` interpretation of Eq. (14) |
 | `max_speed` | NED velocity magnitude limit |
 | `max_vertical_speed` | NED-down component limit |
 | `max_yaw_rate` | Yaw-rate limit |
@@ -122,6 +121,7 @@ Implemented:
 - calibrated monocular unit bearing with the image timestamp;
 - optical-to-camera-FRD-to-body-to-NED direction conversion;
 - LOS azimuth/elevation calculation;
+- bounded desired-speed magnitude from current speed plus `speed_increment_mps`;
 - one persistent PNG-inspired velocity-direction state;
 - exposure-time attitude and own-velocity alignment;
 - one guidance-state update per distinct camera observation;
@@ -133,7 +133,6 @@ Still missing or different from the paper:
 
 - measured vehicle velocity angles in Eq. (8) and the Eq. (9) state anchor;
 - consistent pixel versus normalized FOV-error units;
-- a justified interpretation of Eq. (14);
 - the stated vertical-excursion behavior of Eqs. (15)-(16);
 - desired acceleration, lift direction, attitude, body-rate and lift control in
   Eqs. (17)-(23);

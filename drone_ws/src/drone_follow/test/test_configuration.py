@@ -49,7 +49,7 @@ class ConfigurationTests(unittest.TestCase):
             validate_controller_parameters(parameters)
 
         parameters = copy.deepcopy(self.parameters)
-        parameters['approach_speed'] = parameters['max_speed'] + 1
+        parameters['speed_increment_mps'] = parameters['max_speed'] + 1
         with self.assertRaisesRegex(ValueError, 'must not exceed'):
             validate_controller_parameters(parameters)
 
@@ -68,4 +68,3 @@ class ConfigurationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

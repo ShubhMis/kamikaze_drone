@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from drone_follow.png_ibvs import (
     rotation, bearing_to_ned, los_angles,
     PNGIBVSState, make_state, png_update,
-    fov_yaw_rate, fov_vertical_correction, intercept_command,
+    fov_yaw_rate, intercept_command,
 )
 
 
@@ -232,7 +232,7 @@ class TestInterceptCommand(unittest.TestCase):
         own_vel = np.zeros(3)
         vel, yr = intercept_command(
             bx=0.0, by=0.0, state=state, R_body_ned=R,
-            own_vel_ned=own_vel, dt=0.05, approach_speed=3.0,
+            own_vel_ned=own_vel, dt=0.05, speed_increment_mps=3.0,
         )
         self.assertGreater(vel[0], 2.0,
                            msg="Straight-ahead target should produce mainly northward velocity")
@@ -248,11 +248,29 @@ class TestInterceptCommand(unittest.TestCase):
             vel, _ = intercept_command(
                 bx=bx, by=by, state=state, R_body_ned=R,
                 own_vel_ned=own_vel, dt=0.05,
-                approach_speed=5.0, max_speed=4.0,
+                speed_increment_mps=5.0, max_speed=4.0,
             )
             speed = np.linalg.norm(vel)
             self.assertLessEqual(speed, 4.0 + 1e-9,
                                  msg=f"Speed {speed:.3f} exceeds max_speed for bx={bx}, by={by}")
+
+    def test_eq14_speed_increment(self):
+        state = make_state()
+        vel, _ = intercept_command(
+            bx=0.0, by=0.0, state=state, R_body_ned=np.eye(3),
+            own_vel_ned=np.array([1.5, 0.0, 0.0]), dt=0.05,
+            speed_increment_mps=0.5, max_speed=4.0,
+        )
+        self.assertAlmostEqual(np.linalg.norm(vel), 2.0, places=10)
+
+    def test_level_target_has_no_unconditional_downward_bias(self):
+        state = make_state()
+        vel, _ = intercept_command(
+            bx=0.0, by=0.0, state=state, R_body_ned=np.eye(3),
+            own_vel_ned=np.array([2.0, 0.0, 0.0]), dt=0.05,
+            speed_increment_mps=1.0,
+        )
+        self.assertAlmostEqual(vel[2], 0.0, places=10)
 
     def test_stale_dt_returns_zero(self):
         """dt <= 0 or > 0.5 should return zero velocity safely."""

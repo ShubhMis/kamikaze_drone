@@ -297,45 +297,12 @@ def fov_yaw_rate(ex, state, dt, kp=0.03, kd=0.01, max_yaw_rate=0.6):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. VERTICAL FOV CORRECTION — couples pitch dynamics to vertical velocity
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fov_vertical_correction(own_vel_ned, ka=2.0):
-    """Compute a small NED-down velocity correction to compensate pitch coupling.
-
-    Why needed?
-        When the drone pitches forward to close in, its camera tilts down.
-        This makes the target APPEAR to drift upward in the image even if the
-        target hasn't moved. Without correction, the drone over-corrects
-        altitude and oscillates vertically.
-
-    Paper equation (§III-B):
-        a_vertical = ka * v_horizontal
-
-        The dynamics-induced LOS error is bounded by:
-            Δq_d ≤ arctan(ka / g)    (≈11° for ka=2, g=9.8)
-
-    Args:
-        own_vel_ned: (3,) current NED velocity [north, east, down] m/s.
-        ka:          gain (paper: 2.0, range 1–3).
-
-    Returns:
-        delta_down: small NED-down correction in m/s (positive = descend).
-                    This is added to the PNG velocity command each tick.
-    """
-    v_horiz = math.sqrt(own_vel_ned[0]**2 + own_vel_ned[1]**2)
-    # A forward speed of 3 m/s → delta_down = 2 * 3 * 0.05 ≈ 0.3 m/s per tick.
-    # (The 0.05 dt factor is applied in intercept_command so this returns rate.)
-    return float(ka * v_horiz)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 8. TOP-LEVEL: INTERCEPT COMMAND
+# 7. TOP-LEVEL: INTERCEPT COMMAND
 # ─────────────────────────────────────────────────────────────────────────────
 
 def intercept_command(bx, by, state, R_body_ned, own_vel_ned, dt,
-                      approach_speed=3.0, Ky=3.0, Kz=3.0,
-                      kp=0.03, kd=0.01, ka=2.0,
+                      Ky=3.0, Kz=3.0, kp=0.03, kd=0.01,
+                      speed_increment_mps=2.0,
                       max_speed=4.0, max_yaw_rate=0.6, max_vertical=2.0,
                       mount_q=None):
     """Full IBVS+PNG command for one 20 Hz tick.
@@ -346,10 +313,12 @@ def intercept_command(bx, by, state, R_body_ned, own_vel_ned, dt,
         R_body_ned:    3×3 rotation from rotation(odom_msg.q).
         own_vel_ned:   (3,) current NED velocity from odom_msg.velocity.
         dt:            Seconds since last tick.
-        approach_speed: Desired closing speed in m/s (v_d in paper).
         Ky, Kz:        PNG gains (default 3.0 — paper recommendation).
         kp, kd:        FOV yaw PD gains (default 0.03, 0.01 — paper values).
-        ka:            Vertical FOV correction gain (default 2.0 — paper).
+        speed_increment_mps: Bounded speed increment used for the literal
+                      software interpretation ``vd = ||vnow|| + ka`` of Eq. (14).
+                      The paper does not give an unambiguous software unit
+                      contract for ``ka``; this implementation uses m/s.
         max_speed:     Hard NED velocity magnitude limit (m/s).
         max_yaw_rate:  Hard yaw rate limit (rad/s).
         max_vertical:  Hard NED-down speed limit (m/s).
@@ -364,8 +333,8 @@ def intercept_command(bx, by, state, R_body_ned, own_vel_ned, dt,
                → los_angles()     → q_y, q_z
                → png_update()     → sigma_yd, sigma_zd
                → n_vd (desired velocity direction unit vector)
-               × approach_speed   → vel_ned (before corrections)
-               + fov_vertical_correction() → final vel_ned
+               × clip(||vnow|| + speed_increment_mps, 0, max_speed)
+               → vel_ned
         bx     → fov_yaw_rate()   → yaw_rate
     """
     if dt <= 0 or dt > 0.5:
@@ -397,24 +366,26 @@ def intercept_command(bx, by, state, R_body_ned, own_vel_ned, dt,
         -math.sin(sigma_yd),           # down  (Z in NED, negative = upward)
     ])
 
-    # ── Step 5: Scale by approach speed to get velocity command ──────────────
-    vel_ned = approach_speed * n_vd
+    # ── Step 5: Desired speed magnitude — paper Eq. (14) ────────────────────
+    # Closest literal bounded reconstruction: vd = ||vnow|| + ka. The printed
+    # paper does not settle ka's software units; here it is explicitly a speed
+    # increment in m/s, not a vertical-velocity or acceleration term.
+    current_speed = float(np.linalg.norm(np.asarray(own_vel_ned, dtype=float)))
+    desired_speed = float(np.clip(
+        current_speed + speed_increment_mps, 0.0, max_speed))
+    vel_ned = desired_speed * n_vd
 
-    # ── Step 6: FOV vertical correction — compensate pitch-coupling ──────────
-    # This adds a small downward drift proportional to forward speed to keep
-    # the target from drifting in the image due to pitch attitude change.
-    # The correction is tiny (≪ approach_speed) and bounded by max_vertical.
-    v_corr_rate = fov_vertical_correction(own_vel_ned, ka)
-    # Apply as a small per-tick delta to NED-down component.
-    vel_ned[2] = float(np.clip(vel_ned[2] + v_corr_rate * dt,
-                                -max_vertical, max_vertical))
+    # Engineering safety bound only. Vertical direction remains determined by
+    # PNG; there is no unconditional downward bias.
+    vel_ned[2] = float(np.clip(
+        vel_ned[2], -max_vertical, max_vertical))
 
-    # ── Step 7: Hard speed limit on full 3D vector ───────────────────────────
+    # ── Step 6: Hard speed limit on full 3D vector ───────────────────────────
     speed = float(np.linalg.norm(vel_ned))
     if speed > max_speed:
         vel_ned = vel_ned * (max_speed / speed)
 
-    # ── Step 8: FOV yaw PD controller ────────────────────────────────────────
+    # ── Step 7: FOV yaw PD controller ────────────────────────────────────────
     # ex = bx (horizontal bearing = normalised pixel error, already computed by detector)
     yaw_rate = fov_yaw_rate(bx, state, dt, kp, kd, max_yaw_rate)
 
