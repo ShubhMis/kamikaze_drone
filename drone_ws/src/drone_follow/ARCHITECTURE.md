@@ -48,9 +48,11 @@ The detector publishes a normalized optical-frame ray. `follower.py` recovers
 `bx=ray.x/ray.z` and `by=ray.y/ray.z`. `bearing_to_ned()` rearranges the ray to
 camera FRD, applies `camera_mount_q`, then applies the PX4 body-to-NED attitude.
 
-The current code uses the newest odometry attitude, not attitude interpolated at
-the image exposure timestamp. That timing difference is an explicit open item
-in `PAPER_CONTROLLER_CONTRACT.md`.
+The follower retains timestamped attitude and velocity samples and evaluates
+them at the image exposure timestamp. Attitude uses quaternion SLERP and
+velocity uses linear interpolation; a small bounded latest-sample hold covers
+minor callback skew. Each distinct image timestamp updates the guidance state
+once, while faster setpoint ticks repeat the most recent command.
 
 ## Single-controller execution
 
@@ -79,7 +81,11 @@ state, disallowed PX4 manoeuvre, leaving armed Offboard, clock discontinuity and
 target loss. Target loss also clears the detection count.
 
 This prevents LOS and derivative history from one engagement being reused in a
-later engagement. It does not add an automatic reacquisition controller.
+later engagement. With `auto_reacquire=true`, visual-only loss retains the
+operator's pursuit request for at most `reacquire_timeout_s`. Zero velocity is
+published while `minimum_detections` new observations are collected; return to
+control always creates a fresh `PNGIBVSState`. Health, PX4-state, estimator,
+clock and explicit-disable resets never auto-resume.
 
 ## Timing
 

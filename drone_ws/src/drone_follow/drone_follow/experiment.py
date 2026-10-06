@@ -23,6 +23,14 @@ from std_srvs.srv import SetBool
 from px4_msgs.msg import VehicleOdometry, VehicleStatus, OffboardControlMode
 
 
+def takeoff_altitude(config, instance):
+    """Return each vehicle's height above its own PX4 home position."""
+    altitude = float(config['takeoff_altitude_m'])
+    if instance == 2:
+        altitude += float(config.get('target_takeoff_altitude_offset_m', 0.0))
+    return altitude
+
+
 class Experiment(Node):
     def __init__(self):
         # Intentionally wall clock: must still fail if Gazebo /clock stops.
@@ -251,7 +259,7 @@ class Experiment(Node):
             else:
                 for i in (1,2):
                     for key,value in [('COM_RC_IN_MODE',4),('NAV_DLL_ACT',0),
-                                      ('MIS_TAKEOFF_ALT',self.c['takeoff_altitude_m']),
+                                      ('MIS_TAKEOFF_ALT',takeoff_altitude(self.c, i)),
                                       ('COM_OF_LOSS_T',0.5),('COM_OBL_RC_ACT',4)]:
                         self.command(i,'param','set',key,value)
                 self.transition('PREFLIGHT')
@@ -273,7 +281,8 @@ class Experiment(Node):
                     self.command(i,'commander','takeoff')
                 self.transition('TAKEOFF')
         elif self.stage == 'TAKEOFF':
-            stable = all(abs(float(self.odom[i].position[2]-self.initial[i][2])+self.c['takeoff_altitude_m']) < .5
+            stable = all(abs(float(self.odom[i].position[2]-self.initial[i][2])
+                             + takeoff_altitude(self.c, i)) < .5
                          and np.linalg.norm(self.odom[i].velocity) < .35
                          and self.status[i].nav_state in (VehicleStatus.NAVIGATION_STATE_AUTO_LOITER,
                                                          VehicleStatus.NAVIGATION_STATE_POSCTL)
@@ -301,8 +310,10 @@ class Experiment(Node):
                 if not all(self.status[i].arming_state == VehicleStatus.ARMING_STATE_ARMED and
                            self.status[i].nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD for i in (1,2)):
                     raise RuntimeError('Vehicle left armed Offboard during recording')
-                if self.stage == 'INTERCEPTING' and not self.metrics.get('enabled'):
-                    raise RuntimeError('Pursuit disabled (e.g. detection loss); no automatic reacquisition')
+                if (self.stage == 'INTERCEPTING'
+                        and not self.metrics.get('enabled')
+                        and not self.metrics.get('reacquiring')):
+                    raise RuntimeError('Pursuit stopped and is not eligible for reacquisition')
             if self.c['duration_s'] and now-self.stage_start >= self.c['duration_s']:
                 if self.c['scenario'] == 'observe':
                     self.finish(True,'Sensor/communication baseline completed; no flight commanded')

@@ -150,13 +150,18 @@ There is no controller-mode parameter, centring fallback, dwell timer, hysteresi
 | `Vector3Stamped /target/bearing_camera` | `detector.py` | Unit ray in `follow_camera_optical`: x right, y down, z forward | Original image header; nominal camera rate 20 Hz | `follower.target()` |
 | `bx = ray.x/ray.z`, `by = ray.y/ray.z` | `follower.py` | Dimensionless normalized image coordinates | Recovered from the latest accepted bearing | `intercept_command()` |
 | `error_u_px`, `error_v_px` | `detector.py` diagnostics | Image pixels relative to `CameraInfo` principal point | Original image timestamp | Experiment/viewer only; the active controller does not consume them |
-| `odom_msg.q` | PX4 `VehicleOdometry` | Hamilton quaternion; body FRD to local NED | Latest odometry received at control time, not interpolated to image exposure | `rotation()` |
-| `odom_msg.velocity` | PX4 `VehicleOdometry` | NED m/s | Latest odometry received at control time | Current custom vertical correction only |
+| aligned own attitude | PX4 `VehicleOdometry.q` history | Hamilton quaternion; body FRD to local NED | Quaternion SLERP at the accepted image timestamp; bounded latest-sample hold only for minor callback skew | `rotation()` |
+| aligned own velocity | PX4 `VehicleOdometry.velocity` history | NED m/s | Linear interpolation at the accepted image timestamp; same bounded hold policy | Current custom vertical correction only |
 | `camera_mount_q` | `follow.yaml` | Camera FRD to body FRD quaternion | Static run parameter | `bearing_to_ned()` |
 | `vel_ned` | `intercept_command()` | NED m/s | Follower timer, currently 20 Hz | PX4 `TrajectorySetpoint.velocity` |
 | `yaw_rate` | `intercept_command()` | rad/s, PX4 NED yaw-rate convention | Follower timer, currently 20 Hz | PX4 `TrajectorySetpoint.yawspeed` |
 
-The current transform uses the latest vehicle attitude when the timer runs. Image-time attitude history/interpolation is not implemented. Camera translation is not used when forming the direction-only LOS.
+PX4 publication-to-sample age is subtracted from ROS receipt time so odometry
+history remains in the image clock domain without assuming equal absolute PX4
+and ROS epochs. DDS transport delay remains an unmeasured residual. A distinct
+image timestamp advances the guidance state at most once; intervening 20 Hz
+setpoint ticks repeat the last command. Camera translation is not used when
+forming the direction-only LOS.
 
 ### 6.2 Persistent state and reset contract
 
@@ -171,7 +176,14 @@ The current transform uses the latest vehicle attitude when the timer runs. Imag
 - simulation-time discontinuity; or
 - stale/lost target measurement.
 
-After target loss, the detection counter is also cleared. Reacquisition therefore requires the configured number of new detections and another explicit enable request. No previous LOS or derivative history survives the reset.
+After target loss, the detection counter is also cleared. When bounded
+automatic reacquisition is configured, visual-only loss retains the operator's
+pursuit request while publishing zero velocity. The configured number of new
+detections must arrive before a fresh controller state is created. Timeout,
+explicit disable, estimator reset, health failure, PX4-mode departure, and
+clock discontinuity cancel that request. No previous LOS, desired-angle, or
+derivative history survives reacquisition. This lifecycle behavior is an
+engineering policy, not a behavior specified by the paper.
 
 ### 6.3 Equation-to-code conformance matrix
 
@@ -179,7 +191,7 @@ After target loss, the detection counter is also cleared. Reacquisition therefor
 |---|---|---|
 | (3) | `detector.py` computes pixel errors; `follower.py` consumes normalized coordinates | Partial: both representations exist, but only normalized error reaches control |
 | (4) | No interaction-matrix implementation | Missing |
-| (5) | `bearing_to_ned()` constructs and rotates the camera ray | Partial: current, rather than exposure-time, attitude is used |
+| (5) | `bearing_to_ned()` constructs and rotates the camera ray using exposure-time-aligned attitude | Partial: geometric ray/rotation is implemented, but camera translation and the paper's complete upstream timing contract are not |
 | (6) | Approximated by the discrete update in `png_update()` | Partial |
 | (7) | `los_angles()` uses `atan2` in NED | Implemented with explicit NED convention |
 | (8) | No measured-velocity-direction calculation | Missing, including zero-speed handling |
@@ -200,10 +212,12 @@ Consequently, the active module is named and reported as a **single PNG-IBVS vel
 |---|---:|---:|
 | Camera | 20 Hz | 20 Hz configured in the follower model |
 | Detector/DKF | 50 Hz | Detector follows camera arrivals; no DKF |
-| IMU | 100 Hz | PX4/Gazebo rate is platform-configured; controller consumes latest odometry |
+| IMU | 100 Hz | PX4/Gazebo rate is platform-configured; controller retains and aligns odometry to image time |
 | IBVS controller | 200 Hz | 20 Hz (`create_timer(0.05, ...)`) |
 
-Repeating a stored camera bearing on another timer invocation is not a new observation. A future estimator/controller split must identify distinct measurement timestamps explicitly.
+Repeating a stored camera bearing on another timer invocation is not a new
+observation. The implementation keys guidance updates by the accepted image
+timestamp and reuses the last command between observations.
 
 ### 6.5 Active parameters
 
@@ -276,7 +290,13 @@ Bibliographic entry, p. 10: K. Yang, C. Bai, Z. She, and Q. Quan, *High-speed in
 
 **PAPER:** Eq. (9) uses current and previous sample indices; Eq. (17) uses `dt`; Figure 3 labels subsystem rates.
 
-**OPEN:** a full timestamp contract, correspondence between subsystem samples, first-sample behavior, zero-velocity direction, time discontinuities, and reset semantics. Those details are not determined merely by a nominal frequency label.
+**IMPLEMENTED SOFTWARE POLICY:** accepted image stamps identify distinct
+guidance samples. Own attitude and velocity are aligned to each image stamp;
+the first controller interval is 50 ms; subsequent intervals use consecutive
+image stamps; and simulation-time discontinuities clear both controller and
+own-state history. This is an explicit reconstruction policy, not a claim that
+the paper specified these software details. Zero-velocity direction and the
+paper's intended multi-rate correspondence remain OPEN.
 
 ### Q9. Mathematical outputs versus an external interface
 

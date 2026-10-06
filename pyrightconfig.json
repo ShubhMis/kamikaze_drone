@@ -1,0 +1,16 @@
+{
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "basic",
+  "include": [
+    "drone_ws/src/drone_follow/drone_follow",
+    "drone_ws/src/drone_follow/scripts",
+    "drone_ws/src/drone_follow/test"
+  ],
+  "extraPaths": [
+    "drone_ws/build/drone_follow",
+    "drone_ws/install/drone_follow/lib/python3.10/site-packages",
+    "drone_ws/install/px4_msgs/local/lib/python3.10/dist-packages",
+    "/opt/ros/humble/lib/python3.10/site-packages",
+    "/opt/ros/humble/local/lib/python3.10/dist-packages"
+  ]
+}

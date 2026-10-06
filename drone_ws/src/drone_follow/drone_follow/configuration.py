@@ -6,6 +6,11 @@ import math
 CONTROLLER_KEYS = {
     'px4_namespace',
     'max_measurement_age_s',
+    'auto_reacquire',
+    'reacquire_timeout_s',
+    'state_history_s',
+    'max_state_extrapolation_s',
+    'max_odometry_sample_age_s',
     'minimum_detections',
     'approach_speed',
     'max_yaw_rate',
@@ -68,10 +73,26 @@ def validate_controller_parameters(parameters):
 
     if 'use_sim_time' in parameters and not isinstance(parameters['use_sim_time'], bool):
         raise ValueError('use_sim_time must be a YAML boolean')
+    if not isinstance(parameters['auto_reacquire'], bool):
+        raise ValueError('auto_reacquire must be a YAML boolean')
 
     age = _finite_number(parameters, 'max_measurement_age_s')
     if not 0 < age <= 10:
         raise ValueError('max_measurement_age_s must be >0 and <=10')
+
+    reacquire_timeout = _finite_number(parameters, 'reacquire_timeout_s')
+    if not age <= reacquire_timeout <= 60:
+        raise ValueError('reacquire_timeout_s must cover max_measurement_age_s and be <=60')
+
+    history = _finite_number(parameters, 'state_history_s')
+    extrapolation = _finite_number(parameters, 'max_state_extrapolation_s')
+    odometry_age = _finite_number(parameters, 'max_odometry_sample_age_s')
+    if not age <= history <= 30:
+        raise ValueError('state_history_s must cover max_measurement_age_s and be <=30')
+    if not 0 <= extrapolation <= min(history, 0.2):
+        raise ValueError('max_state_extrapolation_s must be between 0 and 0.2')
+    if not 0 < odometry_age <= 1:
+        raise ValueError('max_odometry_sample_age_s must be >0 and <=1')
 
     detections = parameters['minimum_detections']
     if isinstance(detections, bool) or not isinstance(detections, int) or not 1 <= detections <= 100:
@@ -106,4 +127,3 @@ def validate_controller_parameters(parameters):
     norm = math.sqrt(sum(float(value) ** 2 for value in mount))
     if norm < 0.5:
         raise ValueError('camera_mount_q has invalid norm')
-

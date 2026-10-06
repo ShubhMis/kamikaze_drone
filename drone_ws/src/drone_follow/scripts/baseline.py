@@ -54,6 +54,12 @@ def preflight(config):
     for key in ('ready_timeout_s', 'stale_timeout_s', 'flight_timeout_s', 'takeoff_altitude_m'):
         if not 0 < float(c[key]) < 600:
             raise RuntimeError(f'Invalid {key}')
+    # Older saved configs predate the per-target offset and remain valid.
+    target_offset = float(c.get('target_takeoff_altitude_offset_m', 0.0))
+    if (not math.isfinite(target_offset) or abs(target_offset) > 20
+            or float(c['takeoff_altitude_m']) + target_offset <= 0):
+        raise RuntimeError('target_takeoff_altitude_offset_m must keep target altitude '
+                           'positive and be within +/-20 m')
     if not 0 <= c['duration_s'] <= 600:
         raise RuntimeError('duration_s must be 0 (until Ctrl+C) or at most 600 seconds')
     if not math.isfinite(c['follower_yaw_deg']) or abs(c['follower_yaw_deg']) > 25:

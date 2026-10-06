@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import yaml
 from px4_msgs.msg import VehicleStatus
-from drone_follow.experiment import Experiment
+from drone_follow.experiment import Experiment, takeoff_altitude
 
 
 class SessionTests(unittest.TestCase):
@@ -46,6 +46,13 @@ class SessionTests(unittest.TestCase):
         n.status = {i: SimpleNamespace(arming_state=VehicleStatus.ARMING_STATE_ARMED,
             nav_state=VehicleStatus.NAVIGATION_STATE_OFFBOARD) for i in (1,2)}
 
+    def test_target_takeoff_altitude_includes_configured_offset(self):
+        follower_altitude = takeoff_altitude(self.node.c, 1)
+        target_altitude = takeoff_altitude(self.node.c, 2)
+        self.assertEqual(follower_altitude, self.node.c['takeoff_altitude_m'])
+        self.assertEqual(target_altitude-follower_altitude,
+                         self.node.c['target_takeoff_altitude_offset_m'])
+
     def test_default_continues_without_landing(self):
         n = self.node
         self.assertEqual(n.c['duration_s'], 0)
@@ -56,6 +63,13 @@ class SessionTests(unittest.TestCase):
         self.assertFalse(n.done or n.halted)
         n.command.assert_not_called()
         self.assertFalse((n.run/'result.json').exists())
+
+    def test_intercept_session_waits_during_bounded_reacquisition(self):
+        n = self.node
+        n.metrics = {'enabled': False, 'reacquiring': True}
+        n.advance()
+        self.assertFalse(n.done or n.halted)
+        n.command.assert_not_called()
 
     @patch('drone_follow.experiment.rclpy.ok', return_value=True)
     def test_finite_interval_stops_pursuit_but_keeps_session(self, _):
